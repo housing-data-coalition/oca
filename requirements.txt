@@ -1,0 +1,6 @@
+lxml
+frogress
+boto3
+python-dotenv
+psycopg2
+urllib3

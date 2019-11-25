@@ -1,0 +1,15 @@
+version: '2'
+services:
+  app:
+    build: .
+    user: 'root'
+    volumes:
+      - .:/app
+    links:
+      - db
+  db:
+    image: postgres:9.6
+    environment:
+      - POSTGRES_USER=oca
+      - POSTGRES_DB=oca
+      - POSTGRES_PASSWORD=oca

@@ -1,0 +1,9 @@
+__pycache__/
+.idea/
+data/
+data-raw/
+data-clean/
+.env
+venv/
+todo
+.DS_Store

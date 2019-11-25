@@ -1,0 +1,146 @@
+// Structure of tables for drawing diagram with dbdiagram.io
+// https://dbdiagram.io/d/5dc7355fedf08a25543dba2f
+
+// the [pk] is only used here to make the keys bold, they 
+// aren't always true primary keys
+
+TABLE oca_index {
+  indexnumberid text [pk]
+  court text
+  fileddate date
+  propertytype text
+  classification text
+  specialtydesignationtypes "text[]"
+  status text
+  disposeddate date
+  disposedreason text
+  firstpaper text
+  primaryclaimtotal numeric
+  dateofjurydemand date
+}
+
+TABLE oca_causes {
+  indexnumberid text [pk]
+  causeofactiontype text [pk]
+  interestfromdate date
+  amount numeric
+}
+
+TABLE oca_addresses {
+  indexnumberid text [pk]
+  city text
+  state text
+  postalcode text
+}
+
+TABLE oca_parties {
+  indexnumberid text [pk]
+  role text
+  partytype text
+  representationtype text
+  undertenant text
+}
+
+TABLE oca_events {
+  indexnumberid text [pk]
+  eventname text
+  fileddate date
+  feetype text
+  filingpartiesroles "text[]"
+  answertype text
+}
+
+TABLE oca_appearances {
+  indexnumberid text [pk]
+  appearanceid bigserial [pk]
+  appearancedatetime timestamp
+  appearancepurpose text
+  appearancereason text
+  appearancepart text
+  motionsequence int
+}
+
+TABLE oca_appearance_outcomes {
+  indexnumberid text [pk]
+  appearanceid bigint [pk]
+  appearanceoutcometype text
+  outcomebasedontype text
+}
+
+TABLE oca_motions {
+  indexnumberid text [pk]
+  sequence int [pk]
+  motiontype text
+  primaryrelief text
+  fileddate date
+  filingpartiesroles "text[]"
+  motiondecision text
+  motiondecisiondate date
+}
+
+
+TABLE oca_decisions {
+  indexnumberid text [pk]
+  sequence int [pk]
+  resultof text
+  highlight text
+}
+
+
+TABLE oca_judgments {
+  indexnumberid text [pk]
+  sequence int [pk]
+  amendedfromjudgmentsequence int
+  judgmenttype text
+  fileddate date
+  entereddatetime timestamp
+  withpossession boolean
+  latestjudgmentstatus text
+  latestjudgmentstatusdate date
+  totaljudgmentamount numeric
+  creditorsroles "text[]"
+  debtorsroles "text[]"
+}
+
+TABLE oca_warrants {
+  indexnumberid text [pk]
+  judgmentsequence int [pk]
+  sequence text [pk]
+  createdreason text
+  ordereddate date
+  issuancetype text
+  issuancestayeddate date
+  issuancestayeddays int
+  issueddate date
+  executiontype text
+  executionstayeddate date
+  executionstayeddays int
+  marshalrequestdate date
+  marshalrequestrevieweddate date
+  enforcementagency text
+  enforcementofficerdocketnumber text
+  propertiesonwarrantcities "text[]"
+  propertiesonwarrantstates "text[]"
+  propertiesonwarrantpostalcodes "text[]"
+  amendeddate date
+  vacateddate date
+  adultprotectiveservicesnumber text
+  returneddate date
+  returnedreason text
+  executiondate date
+}
+
+Ref: oca_index.indexnumberid < oca_causes.indexnumberid
+Ref: oca_index.indexnumberid < oca_addresses.indexnumberid
+Ref: oca_index.indexnumberid < oca_parties.indexnumberid
+Ref: oca_index.indexnumberid < oca_events.indexnumberid
+Ref: oca_index.indexnumberid < oca_appearances.indexnumberid
+Ref: oca_index.indexnumberid < oca_motions.indexnumberid
+Ref: oca_index.indexnumberid < oca_decisions.indexnumberid
+Ref: oca_index.indexnumberid < oca_judgments.indexnumberid
+
+Ref: oca_appearances.indexnumberid < oca_appearance_outcomes.indexnumberid
+Ref: oca_appearances.appearanceid < oca_appearance_outcomes.appearanceid
+
+Ref: oca_judgments.indexnumberid < oca_warrants.indexnumberid
+Ref: oca_judgments.sequence < oca_warrants.judgmentsequence
