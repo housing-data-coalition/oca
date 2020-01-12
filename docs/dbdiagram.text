@@ -21,7 +21,7 @@ TABLE oca_index {
 
 TABLE oca_causes {
   indexnumberid text [pk]
-  causeofactiontype text [pk]
+  causeofactiontype text
   interestfromdate date
   amount numeric
 }
