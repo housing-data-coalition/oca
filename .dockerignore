@@ -1,0 +1,12 @@
+.git/
+Dockerfile
+docker-compose.yml
+__pycache__/
+.idea/
+data/
+data-raw/
+data-clean/
+.env
+venv/
+todo
+.DS_Store
