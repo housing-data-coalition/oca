@@ -1,7 +1,11 @@
 import logging
 import boto3
+import os
+import re
+
 from botocore.exceptions import ClientError
 from botocore.client import Config
+
 
 def s3_client(aws_id, aws_key):
 	s3 = boto3.client(
@@ -13,30 +17,6 @@ def s3_client(aws_id, aws_key):
 
 	return s3
 
-
-# https://docs.aws.amazon.com/code-samples/latest/catalog/python-s3-get_object.py.html
-
-def get_object(s3_client, bucket_name, object_name):
-    """Retrieve an object from an Amazon S3 bucket
-
-    :param s3_client: s3_client as returned by s3_client()
-    :param bucket_name: string
-    :param object_name: string
-    :return: botocore.response.StreamingBody object. If error, return None.
-    """
-
-    try:
-        response = s3_client.get_object(Bucket=bucket_name, Key=object_name)
-    except ClientError as e:
-        # AllAccessDisabled error == bucket or object not found
-        logging.error(e)
-        return None
-
-    # Return an open StreamingBody object
-    return response['Body']
-
-
-# https://docs.aws.amazon.com/code-samples/latest/catalog/python-s3-put_object.py.html
 
 def put_object(s3_client, dest_bucket_name, dest_object_name, src_data):
 	"""Add an object to an Amazon S3 bucket
@@ -51,6 +31,8 @@ def put_object(s3_client, dest_bucket_name, dest_object_name, src_data):
 	:return: True if src_data was added to dest_bucket/dest_object, otherwise
 	False
 	"""
+
+	# https://docs.aws.amazon.com/code-samples/latest/catalog/python-s3-put_object.py.html
 
 	# Construct Body= parameter
 	if isinstance(src_data, bytes):
@@ -79,6 +61,41 @@ def put_object(s3_client, dest_bucket_name, dest_object_name, src_data):
 			object_data.close()
 	return True
 
+def get_matching_s3_keys(s3_client, bucket, prefix='', pattern=''):
+    """
+    Generate the keys in an S3 bucket.
+
+    :param bucket: Name of the S3 bucket.
+    :param prefix: Only fetch keys that start with this prefix (optional).
+    :param pattern: Only fetch keys that match this regex pattern (optional).
+    """
+
+    # Adapted from https://alexwlchan.net/2017/07/listing-s3-keys/
+
+    kwargs = {'Bucket': bucket}
+
+    # If the prefix is a single string (not a tuple of strings), we can
+    # do the filtering directly in the S3 API.
+    if isinstance(prefix, str):
+        kwargs['Prefix'] = prefix
+
+    while True:
+
+        # The S3 API response is a large blob of metadata.
+        # 'Contents' contains information about the listed objects.
+        resp = s3_client.list_objects_v2(**kwargs)
+        for obj in resp['Contents']:
+            key = obj['Key']
+            if key.startswith(prefix) and re.search(pattern, key):
+                yield key
+
+        # The S3 API is paginated, returning up to 1000 keys at a time.
+        # Pass the continuation token into the next response, until we
+        # reach the final page (when this field is missing).
+        try:
+            kwargs['ContinuationToken'] = resp['NextContinuationToken']
+        except KeyError:
+            break
 
 class S3:
 	"""AWS S3 client for getting/putting objects to/from oca-data bucket"""
@@ -87,39 +104,22 @@ class S3:
 		self.s3 = s3_client(aws_id, aws_key)
 
 
-	def get_object_stream(self, object_name):
-		# TODO: Because the parsing takes some time, on large XML files the
-		# connection can easily timeout using this stream method. Instead we ned
-		# simply download the file to a local folder and parse it from there. We can
-		# probably just remove these put_object() and get_object_stream() fuctions.
-
-		# Set up logging
-		logging.basicConfig(level=logging.DEBUG,
-		                    format='%(levelname)s: %(asctime)s: %(message)s')
+	def download_file(self, object_name, file_path):
 
 		# Retrieve the object
-		stream = get_object(self.s3, 'oca-data', object_name)
-
-		return stream
-
-	def get_object_download(self, object_name, file_path):
-
-		# Set up logging
-		logging.basicConfig(level=logging.DEBUG,
-		                    format='%(levelname)s: %(asctime)s: %(message)s')
-
-		# Retrieve the object
-		stream = self.s3.download_file('oca-data', f"private/{object_name}", file_path)
+		self.s3.download_file('oca-data', object_name, file_path)
 
 
-	def put_object_file(self, object_name, file_name):
-
-		# Set up logging
-		logging.basicConfig(level=logging.DEBUG,
-		                    format='%(levelname)s: %(asctime)s: %(message)s')
+	def upload_file(self, object_name, file_path):
 
 		# Put the object into the bucket
-		success = put_object(self.s3, 'oca-data', f"public/{object_name}", file_name)
+		put_object(self.s3, 'oca-data', object_name, file_path)
 
-		if success:
-			logging.info(f'Added {object_name} to oca-data/public')
+
+	def list_files(self, pattern):
+
+		all_files = get_matching_s3_keys(self.s3, 'oca-data', 'private/', pattern)
+
+		files = [os.path.basename(x) for x in all_files if x != 'private/']
+
+		return files

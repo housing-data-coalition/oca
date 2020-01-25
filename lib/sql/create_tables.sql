@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS oca_appearances (
   appearancereason text,
   appearancepart text,
   motionsequence int,
-  appearanceoutcomes json -- will be dropped later
+  appearanceoutcomes json -- not included in csv exports
 );
 
 -- Created from "appearanceoutcomes" column in "oca_appearances" table 

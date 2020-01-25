@@ -1,5 +1,5 @@
+import frogress
 from lxml import etree
-# from .database import Database
 
 
 def drop_case_rows(case, db):
@@ -435,14 +435,30 @@ def parse_case(case, db):
     drop_case_rows(case, db)
 
     # If this case is flagged for removal, skip the parsing steps
-    if not is_case_to_delete(case):
-        parse_index(case, db)
-        parse_causes(case, db)
-        parse_addresses(case, db)
-        parse_parties(case, db)
-        parse_events(case, db)
-        parse_appearances(case, db)
-        parse_motions(case, db)
-        parse_decisions(case, db)
-        parse_judgments(case, db)
-        parse_warrants(case, db)
+    if is_case_to_delete(case):
+        return
+
+    parse_index(case, db)
+    parse_causes(case, db)
+    parse_addresses(case, db)
+    parse_parties(case, db)
+    parse_events(case, db)
+    parse_appearances(case, db)
+    parse_motions(case, db)
+    parse_decisions(case, db)
+    parse_judgments(case, db)
+    parse_warrants(case, db)
+
+def parse_file(xml_file, db):
+
+    context = etree.iterparse(xml_file, tag=oca_tag('Index'))
+
+    for action, case in frogress.bar(context):
+
+        # If case already exists in DB delete it, 
+        # if we have delete instructions don't re-add it, 
+        # otherwise parse the case and insert it into the various tables.
+        parse_case(case, db)
+
+        # Clear the case element to free memory
+        case.clear()

@@ -1,7 +1,10 @@
 version: '2'
 services:
   app:
-    build: .
+    build: 
+      context: .
+      args: 
+        SFTP_HOST: ${SFTP_HOST}
     user: 'root'
     volumes:
       - .:/app

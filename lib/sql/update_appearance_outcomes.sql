@@ -5,6 +5,7 @@
 -- with serial, then extract the outcomes json data into a separate table and
 -- use the new ID column to link the records.
 
+TRUNCATE oca_appearance_outcomes;
 INSERT INTO oca_appearance_outcomes 
 	SELECT 
 		a.indexnumberid, 
@@ -15,5 +16,3 @@ INSERT INTO oca_appearance_outcomes
 		oca_appearances AS a, 
 		json_to_recordset(a.appearanceoutcomes) 
 			AS x(appearanceoutcometype text, outcomebasedontype text);
-
-ALTER TABLE oca_appearances DROP COLUMN appearanceoutcomes;
