@@ -1,0 +1,1 @@
+docker build --build-arg SFTP_HOST=$SFTP_HOST -f $DOCKERFILE_PATH -t $IMAGE_NAME .
