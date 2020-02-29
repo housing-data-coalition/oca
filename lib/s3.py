@@ -18,7 +18,7 @@ def s3_client(aws_id, aws_key):
 	return s3
 
 
-def put_object(s3_client, dest_bucket_name, dest_object_name, src_data):
+def put_object(s3_client, dest_bucket_name, dest_object_name, src_data, content_type):
 	"""Add an object to an Amazon S3 bucket
 
 	The src_data argument must be of type bytes or a string that references
@@ -50,7 +50,12 @@ def put_object(s3_client, dest_bucket_name, dest_object_name, src_data):
 		return False
 
 	try:
-		s3_client.put_object(Bucket=dest_bucket_name, Key=dest_object_name, Body=object_data)
+		s3_client.put_object(
+			Bucket=dest_bucket_name, 
+			Key=dest_object_name, 
+			Body=object_data,
+			ContentType=content_type
+		)
 	except ClientError as e:
 		# AllAccessDisabled error == bucket not found
 		# NoSuchKey or InvalidRequest error == (dest bucket/obj == src bucket/obj)
@@ -112,8 +117,18 @@ class S3:
 
 	def upload_file(self, object_name, file_path):
 
+		ext = re.search(r'\.(.*)$', file_path).group(1)
+		content_type = {
+			'csv': 'text/csv',
+			'txt': 'text/plain',
+			'svg': 'image/svg+xml',
+			'png': 'image/png',
+			'zip': 'application/zip',
+			'dump': 'application/pgp-signature'
+		}[ext]
+
 		# Put the object into the bucket
-		put_object(self.s3, 'oca-data', object_name, file_path)
+		put_object(self.s3, 'oca-data', object_name, file_path, content_type)
 
 
 	def list_files(self, pattern, folder=''):
