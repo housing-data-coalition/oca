@@ -3,7 +3,10 @@ from lxml import etree
 
 
 def drop_case_rows(case, db):
-    """ remove a single case from the database 
+    """ 
+    Remove a single case from all the main tables in the database 
+    (all other main tables reference the id in the oca_index table 
+    and the deletion cascades to those tables)
 
     :param case: an lxml.etree element for a case index
     :param db: a Database object
@@ -12,7 +15,7 @@ def drop_case_rows(case, db):
     db.sql(f"DELETE FROM oca_index WHERE indexnumberid = '{case_id}';")
 
 def is_case_to_delete(case):
-    """ determine if a case should from the database
+    """ Determine if a case should from the database
 
     :param case: an lxml.etree element for a case index
     :return: boolean
@@ -101,7 +104,7 @@ def parse_index(case, db):
         'dateofjurydemand' : oca_extract(case, 'DateOfJuryDemand'),
     }]
 
-    db.insert_rows(row, 'oca_index')
+    db.insert_rows(row, 'oca_index_staging')
 
 
 def parse_causes(case, db):
@@ -128,7 +131,7 @@ def parse_causes(case, db):
         })
 
     if rows:
-        db.insert_rows(rows, 'oca_causes')
+        db.insert_rows(rows, 'oca_causes_staging')
 
 
 def parse_addresses(case, db):
@@ -156,7 +159,7 @@ def parse_addresses(case, db):
         })
         
     if rows:
-        db.insert_rows(rows, 'oca_addresses')
+        db.insert_rows(rows, 'oca_addresses_staging')
 
 def parse_parties(case, db):
     """ for a case parse all the values for the oca_parties
@@ -184,7 +187,7 @@ def parse_parties(case, db):
         })
 
     if rows:
-        db.insert_rows(rows, 'oca_parties')
+        db.insert_rows(rows, 'oca_parties_staging')
 
 
 def parse_events(case, db):
@@ -214,7 +217,7 @@ def parse_events(case, db):
         })
 
     if rows:
-        db.insert_rows(rows, 'oca_events')
+        db.insert_rows(rows, 'oca_events_staging')
 
 
 def appearance_outcome_to_json(elem):
@@ -259,7 +262,7 @@ def parse_appearances(case, db):
         })
 
     if rows:
-        db.insert_rows(rows, 'oca_appearances')
+        db.insert_rows(rows, 'oca_appearances_staging')
 
 
 def parse_motions(case, db):
@@ -291,7 +294,7 @@ def parse_motions(case, db):
         })
 
     if rows:
-        db.insert_rows(rows, 'oca_motions')
+        db.insert_rows(rows, 'oca_motions_staging')
 
 
 def parse_decisions(case, db):
@@ -322,7 +325,7 @@ def parse_decisions(case, db):
         })
 
     if rows:
-        db.insert_rows(rows, 'oca_decisions')
+        db.insert_rows(rows, 'oca_decisions_staging')
 
 
 def parse_judgments(case, db):
@@ -359,7 +362,7 @@ def parse_judgments(case, db):
         })
 
     if rows:
-        db.insert_rows(rows, 'oca_judgments')
+        db.insert_rows(rows, 'oca_judgments_staging')
 
 
 def parse_warrants(case, db):
@@ -420,7 +423,7 @@ def parse_warrants(case, db):
             })
 
         if rows:
-            db.insert_rows(rows, 'oca_warrants')
+            db.insert_rows(rows, 'oca_warrants_staging')
 
 def parse_case(case, db):
     """ for a case, remove it from the database if it already exists, 
@@ -431,11 +434,10 @@ def parse_case(case, db):
     :param db: a Database object
     """
 
-    # Remove the case from all tables if it already exists
-    drop_case_rows(case, db)
-
     # If this case is flagged for removal, skip the parsing steps
     if is_case_to_delete(case):
+        # Remove the case from all tables if it already exists
+        drop_case_rows(case, db)
         return
 
     parse_index(case, db)

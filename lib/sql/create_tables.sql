@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS oca_index (
 	dateofjurydemand date
 );
 
-DROP TABLE IF EXISTS oca_causes;
+DROP TABLE IF EXISTS oca_causes CASCADE;
 CREATE TABLE IF NOT EXISTS oca_causes (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   causeofactiontype text,
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS oca_causes (
   amount numeric
 );
 
-DROP TABLE IF EXISTS oca_addresses;
+DROP TABLE IF EXISTS oca_addresses CASCADE;
 CREATE TABLE IF NOT EXISTS oca_addresses (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   city text,
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS oca_addresses (
   postalcode text
 );
 
-DROP TABLE IF EXISTS oca_parties;
+DROP TABLE IF EXISTS oca_parties CASCADE;
 CREATE TABLE IF NOT EXISTS oca_parties (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   role text,
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS oca_parties (
   undertenant text
 );
 
-DROP TABLE IF EXISTS oca_events;
+DROP TABLE IF EXISTS oca_events CASCADE;
 CREATE TABLE IF NOT EXISTS oca_events (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   eventname text,
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS oca_events (
   answertype text
 );
 
-DROP TABLE IF EXISTS oca_appearances;
+DROP TABLE IF EXISTS oca_appearances CASCADE;
 CREATE TABLE IF NOT EXISTS oca_appearances (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   appearanceid bigserial,
@@ -58,13 +58,10 @@ CREATE TABLE IF NOT EXISTS oca_appearances (
   appearancepurpose text,
   appearancereason text,
   appearancepart text,
-  motionsequence int,
-  appearanceoutcomes json -- not included in csv exports
+  motionsequence int
 );
 
--- Created from "appearanceoutcomes" column in "oca_appearances" table 
--- by "update_apperance_outcomes.sql" after initial loading
-DROP TABLE IF EXISTS oca_appearance_outcomes;
+DROP TABLE IF EXISTS oca_appearance_outcomes CASCADE;
 CREATE TABLE IF NOT EXISTS oca_appearance_outcomes (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   appearanceid bigint,
@@ -72,7 +69,7 @@ CREATE TABLE IF NOT EXISTS oca_appearance_outcomes (
   outcomebasedontype text
 );
 
-DROP TABLE IF EXISTS oca_motions;
+DROP TABLE IF EXISTS oca_motions CASCADE;
 CREATE TABLE IF NOT EXISTS oca_motions (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   sequence int,
@@ -85,7 +82,7 @@ CREATE TABLE IF NOT EXISTS oca_motions (
 );
 
 
-DROP TABLE IF EXISTS oca_decisions;
+DROP TABLE IF EXISTS oca_decisions CASCADE;
 CREATE TABLE IF NOT EXISTS oca_decisions (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   sequence int,
@@ -94,7 +91,7 @@ CREATE TABLE IF NOT EXISTS oca_decisions (
 );
 
 
-DROP TABLE IF EXISTS oca_judgments;
+DROP TABLE IF EXISTS oca_judgments CASCADE;
 CREATE TABLE IF NOT EXISTS oca_judgments (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   sequence int,
@@ -110,7 +107,7 @@ CREATE TABLE IF NOT EXISTS oca_judgments (
   debtorsroles text[]
 );
 
-DROP TABLE IF EXISTS oca_warrants;
+DROP TABLE IF EXISTS oca_warrants CASCADE;
 CREATE TABLE IF NOT EXISTS oca_warrants (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   judgmentsequence int,
@@ -138,3 +135,15 @@ CREATE TABLE IF NOT EXISTS oca_warrants (
   returnedreason text,
   executiondate date
 );
+
+
+CREATE INDEX ON oca_causes (indexnumberid);
+CREATE INDEX ON oca_addresses (indexnumberid);
+CREATE INDEX ON oca_parties (indexnumberid);
+CREATE INDEX ON oca_events (indexnumberid);
+CREATE INDEX ON oca_appearances (indexnumberid);
+CREATE INDEX ON oca_appearance_outcomes (indexnumberid);
+CREATE INDEX ON oca_motions (indexnumberid);
+CREATE INDEX ON oca_decisions (indexnumberid);
+CREATE INDEX ON oca_judgments (indexnumberid);
+CREATE INDEX ON oca_warrants (indexnumberid);

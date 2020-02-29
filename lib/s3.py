@@ -12,7 +12,7 @@ def s3_client(aws_id, aws_key):
 		's3',
 		aws_access_key_id=aws_id,
 		aws_secret_access_key=aws_key,
-		config=Config(connect_timeout=10, read_timeout=10, retries={'max_attempts': 0})
+		config=Config(connect_timeout=10, read_timeout=100, retries={'max_attempts': 1})
 	)
 
 	return s3
@@ -116,10 +116,13 @@ class S3:
 		put_object(self.s3, 'oca-data', object_name, file_path)
 
 
-	def list_files(self, pattern):
+	def list_files(self, pattern, folder=''):
 
-		all_files = get_matching_s3_keys(self.s3, 'oca-data', 'private/', pattern)
+		if folder != '' and not folder.endswith('/'):
+			folder = folder + '/'
 
-		files = [os.path.basename(x) for x in all_files if x != 'private/']
+		all_files = get_matching_s3_keys(self.s3, 'oca-data', folder, pattern)
+
+		files = [os.path.basename(x) for x in all_files if x != folder]
 
 		return files

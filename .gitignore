@@ -1,9 +1,10 @@
 __pycache__/
 .idea/
 data/
-data-raw/
-data-clean/
+data-private/
+data-public/
 .env
 venv/
 todo
 .DS_Store
+scratch.py

@@ -1,17 +1,14 @@
 # NYC Housing Court Filings
 
-The [Housing Data Coalition](https://www.housingdatanyc.org/) (HDC) has received NYC housing court filings data from the New York State Office of Court Administration (OCA). In this repository we manage the ETL process of getting raw XML filings data, parsing the XML into a set of tables, and making those CSV files public.
+The [Housing Data Coalition](https://www.housingdatanyc.org/) (HDC) has received housing court filings data from the New York State Office of Court Administration (OCA). In this repository we manage the Extract-Transform-Load process for getting raw XML filings data from OCA via SFTP, parsing the nested XML data into a set of tables, and making those CSV files publicly available for download.
 
-To work with these data you can use the [`nycdb_oca`](https://github.com/austensen/nycdb_oca) plugin for [NYCDB](https://github.com/nycdb/nycdb).
-
-
-#### TODO
-
-* We still need to get the SFTP credentials from OCA. Once we do, then we'll need to add a step that moves the file from the SFTP to the private S3 bucket.
-* We still need to learn how frequently the incremental extracts will be made available on the SFTP. Then we'll need to schedule this job to run automatically. 
-* We need to add a feature to get all the XML files in the S3 and iterate over them in order for parsing. 
+To work with these data you can use the [`nycdb_oca`](https://github.com/austensen/nycdb_oca) plugin for [NYCDB](https://github.com/nycdb/nycdb) to automatically load all of the tables into a PostgreSQL database for analysis.
 
 ## CSV Files
+
+![Date Last Updated](https://oca-data.s3.amazonaws.com/public/last-updated-shield.svg)
+
+* [Date last updated](https://oca-data.s3.amazonaws.com/public/last-updated-date.txt)
 
 * [`oca_index`](https://s3.amazonaws.com/oca-data/public/oca_index.csv)
 * [`oca_causes`](https://s3.amazonaws.com/oca-data/public/oca_causes.csv)
@@ -57,4 +54,5 @@ docker-compose run app
 
 ...
 
+## Acknowledgments 
 

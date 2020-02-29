@@ -73,15 +73,6 @@ class Database:
 
     def export_csv(self, table_name, file_path):
         """ Exports tables to CSV files """
-
-        # In the appearances table there is a json column 'appearanceoutcomes' that 
-        # is used after parsing to create the appearance_outcomes table. We don't need 
-        # it in the output, but it can't just be dropped because it's needed for the 
-        # pg_dump to build on in later updates, so we exlcude it during the output here.
-        if table_name == 'oca_appearances':
-            cols = ['indexnumberid', 'appearanceid', 'appearancedatetime', 'appearancepurpose', 
-                    'appearancereason', 'appearancepart', 'motionsequence']
-            table_name = f"(SELECT {', '.join(cols)} FROM oca_appearances)"
         
         f = open(file_path, 'w')
 
