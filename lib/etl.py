@@ -104,7 +104,7 @@ def insert_staging_to_main(db):
         db.sql(f"DROP TABLE {table}_staging")
 
 
-def update_date_files(s3, data_file):
+def create_date_files(s3, data_file, local_dir):
     """
     Create a text file and a custom shield image with date the data was 
     last updated and add them to the public S3 folder.
@@ -114,15 +114,13 @@ def update_date_files(s3, data_file):
     """
     date = re.search(r'(\d{4}-\d{2}-\d{2})', data_file).group(1)
 
-    txt_file = os.path.join(os.path.dirname(data_file), 'last-updated-date.txt')
+    txt_file = os.path.join(local_dir, 'last-updated-date.txt')
     open(txt_file, 'w').write(date)
-    s3.upload_file(f"{S3_PUBLIC_FOLDER}/last-updated-date.txt", txt_file)
 
-    url = f"https://img.shields.io/badge/Last%20Updated-{date.replace('-', '--')}-yellow"
+    url = f"https://raster.shields.io/badge/Last%20Updated-{date.replace('-', '--')}-yellow"
     r = requests.get(url)
-    img_file = os.path.join(os.path.dirname(data_file), 'last-updated-shield.svg')
+    img_file = os.path.join(local_dir, 'last-updated-shield.png')
     open(img_file, 'wb').write(r.content)
-    s3.upload_file(f"{S3_PUBLIC_FOLDER}/last-updated-shield.svg", img_file)
 
 
 def oca_etl(db_args, sftp_args, s3_args):
@@ -198,6 +196,9 @@ def oca_etl(db_args, sftp_args, s3_args):
 
     s3 = S3(**s3_args)
 
+    # Update "last updated date" files on S3 for the latest file processed
+    create_date_files(s3, new_sftp_zip_files[-1], pub_dir)
+
     # Upload csv files to public folder in S3 bucket
     print('Uploading public files to S3:')
     for f in os.listdir(pub_dir):
@@ -209,7 +210,3 @@ def oca_etl(db_args, sftp_args, s3_args):
     for f in os.listdir(priv_dir):
         print('-', f)
         s3.upload_file(f"{S3_PRIVATE_FOLDER}/{f}", os.path.join(priv_dir, f))
-
-
-    # Update "last updated date" files on S3 for the latest file processed
-    update_date_files(s3, new_sftp_zip_files[-1])
