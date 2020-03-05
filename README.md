@@ -6,7 +6,7 @@ To work with these data you can use the [`nycdb_oca`](https://github.com/austens
 
 ## CSV Files
 
-[![Date Last Updated](https://oca-data.s3.amazonaws.com/public/last-updated-shield.png)](https://oca-data.s3.amazonaws.com/public/last-updated-date.txt)
+[![Date Last Updated](https://oca-data.s3.amazonaws.com/public/last-updated-shield.png?)](https://oca-data.s3.amazonaws.com/public/last-updated-date.txt)
 
 * [`oca_index`](https://s3.amazonaws.com/oca-data/public/oca_index.csv)
 * [`oca_causes`](https://s3.amazonaws.com/oca-data/public/oca_causes.csv)
