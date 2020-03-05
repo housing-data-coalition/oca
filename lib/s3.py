@@ -117,14 +117,14 @@ class S3:
 
 	def upload_file(self, object_name, file_path):
 
-		ext = re.search(r'\.(.*)$', file_path).group(1)
+		ext = os.path.splitext(file_path)[1]
 		content_type = {
-			'csv': 'text/csv',
-			'txt': 'text/plain',
-			'svg': 'image/svg+xml',
-			'png': 'image/png',
-			'zip': 'application/zip',
-			'dump': 'application/pgp-signature'
+			'.csv': 'text/csv',
+			'.txt': 'text/plain',
+			'.svg': 'image/svg+xml',
+			'.png': 'image/png',
+			'.zip': 'application/zip',
+			'.dump': 'application/pgp-signature'
 		}[ext]
 
 		# Put the object into the bucket
