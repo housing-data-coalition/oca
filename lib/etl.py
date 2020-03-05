@@ -2,6 +2,7 @@ import os
 import shutil
 import zipfile
 import requests
+import re
 
 from .database import Database
 from .s3 import S3
@@ -140,6 +141,7 @@ def oca_etl(db_args, sftp_args, s3_args):
     priv_dir = make_dir('data-private') # "private/"
     pub_dir = make_dir('data-public') # "public/"
 
+    # For debugging only
     # priv_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data-private'))
     # pub_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data-public'))
     
@@ -196,9 +198,6 @@ def oca_etl(db_args, sftp_args, s3_args):
 
     s3 = S3(**s3_args)
 
-    # Update "last updated date" files on S3 for the latest file processed
-    create_date_files(s3, new_sftp_zip_files[-1], pub_dir)
-
     # Upload csv files to public folder in S3 bucket
     print('Uploading public files to S3:')
     for f in os.listdir(pub_dir):
@@ -210,3 +209,6 @@ def oca_etl(db_args, sftp_args, s3_args):
     for f in os.listdir(priv_dir):
         print('-', f)
         s3.upload_file(f"{S3_PRIVATE_FOLDER}/{f}", os.path.join(priv_dir, f))
+
+    # Update "last updated date" files on S3 for the latest file processed
+    create_date_files(s3, new_sftp_zip_files[-1], pub_dir)
