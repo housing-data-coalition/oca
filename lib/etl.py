@@ -30,7 +30,7 @@ DATA_FILENAME = 'LandlordTenantExtract.xml'
 
 S3_PRIVATE_FOLDER = 'private'
 
-S3_PUBLIC_FOLDER = 'public-test'
+S3_PUBLIC_FOLDER = 'public'
 
 
 def make_dir(dir_name):
@@ -198,6 +198,9 @@ def oca_etl(db_args, sftp_args, s3_args):
 
     s3 = S3(**s3_args)
 
+    # Update "last updated date" files on S3 for the latest file processed
+    create_date_files(s3, new_sftp_zip_files[-1], pub_dir)
+
     # Upload csv files to public folder in S3 bucket
     print('Uploading public files to S3:')
     for f in os.listdir(pub_dir):
@@ -210,5 +213,3 @@ def oca_etl(db_args, sftp_args, s3_args):
         print('-', f)
         s3.upload_file(f"{S3_PRIVATE_FOLDER}/{f}", os.path.join(priv_dir, f))
 
-    # Update "last updated date" files on S3 for the latest file processed
-    create_date_files(s3, new_sftp_zip_files[-1], pub_dir)
