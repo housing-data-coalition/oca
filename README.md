@@ -23,9 +23,11 @@ To work with these data you can use the [`nycdb_oca`](https://github.com/austens
 
 ## About the data
 
-The data we receive from OCA is an extract of all landlord and tenant cases in NYC housing court, without personally identifying information. For more details see [`/docs`](/docs).
+The data we receive from OCA is an extract of all landlord and tenant cases in NYC housing court, without personally identifying information. For more details about the raw data and the final parsed tables, see [`/docs`](/docs).
 
-...
+## About the code
+
+For information about the details of various components, see [`/lib`](/lib)
 
 ## Setup
 
@@ -47,10 +49,3 @@ To run the whole process in the docker container run:
 ```
 docker-compose run app
 ```
-
-## How it works
-
-...
-
-## Acknowledgments 
-

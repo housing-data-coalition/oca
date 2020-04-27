@@ -24,4 +24,4 @@ This is the final structure of the tables, created by the free tool [dbdiagram.i
 
 ## Data dictionary
 
-The folder [`csv-data-dictionary`](csv-data-dictionary) contains a CSV file for each of the final tables and records the column name, data type, official definition from the documentation file, and an extra column for notes where we can add helpful information about the columns as we continue learning about the data.
+The folder [`/csv-data-dictionary`](/csv-data-dictionary) contains a CSV file for each of the final tables and records the column name, data type, official definition from the documentation file, and an extra column for notes where we can add helpful information about the columns as we continue learning about the data.
