@@ -127,8 +127,6 @@ def create_date_files(s3, data_file, local_dir):
 def oca_etl(db_args, sftp_args, s3_args):
     """ 
     Extract files from SFTP, parse cases, upload to S3 bucket
-
-
     """
 
     db = Database(**db_args)
@@ -137,13 +135,13 @@ def oca_etl(db_args, sftp_args, s3_args):
 
     s3 = S3(**s3_args)
 
-    # Create local versions of folder in the S3 bucket "oca-data"
-    priv_dir = make_dir('data-private') # "private/"
-    pub_dir = make_dir('data-public') # "public/"
-
     # For debugging only
     # priv_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data-private'))
     # pub_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data-public'))
+
+    # Create local versions of folder in the S3 bucket "oca-data"
+    priv_dir = make_dir('data-private') # "private/"
+    pub_dir = make_dir('data-public') # "public/"
     
     # Get list of new files to download from SFTP
     new_sftp_zip_files = list_new_data_files(sftp, s3)

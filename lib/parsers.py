@@ -1,7 +1,6 @@
 import frogress
 from lxml import etree
 
-
 def drop_case_rows(case, db):
     """ 
     Remove a single case from all the main tables in the database 
@@ -14,6 +13,7 @@ def drop_case_rows(case, db):
     case_id = case.find(oca_tag('IndexNumberId')).text
     db.sql(f"DELETE FROM oca_index WHERE indexnumberid = '{case_id}';")
 
+
 def is_case_to_delete(case):
     """ Determine if a case should from the database
 
@@ -21,6 +21,7 @@ def is_case_to_delete(case):
     :return: boolean
     """
     return case.find(oca_tag('Delete')) is not None
+
 
 # when refering to XML tags we need to have the "namespace" included as well
 def oca_tag(tag):
@@ -30,6 +31,7 @@ def oca_tag(tag):
     :return: string for tag with namespace
     """
     return '{http://www.example.org/LandlordTenantExtractSchema}' + tag
+
 
 # if there is no element to find calling text method raises error
 def oca_extract(elem, tag):
@@ -41,6 +43,7 @@ def oca_extract(elem, tag):
     """
     x = elem.find(oca_tag(tag))
     return None if x is None else x.text
+
 
 # some attributes can have multiple values that we want to keep on in the same table/row,
 # so we format these for insertion into postgres array. These are either 1 or 2 levels deep.
@@ -60,6 +63,7 @@ def oca_extract_array1(elem, parent_tag, child_tag):
        return "{" + ','.join([ i.text for i in parent_elem.findall(oca_tag(child_tag)) ]) + "}"
     else:
         return None
+
 
 def oca_extract_array2(elem, grandparent_tag, parent_tag, child_tag):
     """ find the first node for given gandparent tag then extract all 
@@ -161,6 +165,7 @@ def parse_addresses(case, db):
     if rows:
         db.insert_rows(rows, 'oca_addresses_staging')
 
+
 def parse_parties(case, db):
     """ for a case parse all the values for the oca_parties
     table and load the values into the database table
@@ -225,6 +230,7 @@ def appearance_outcome_to_json(elem):
     outcomebasedontype_val = '"' + elem.find(oca_tag('OutcomeBasedOnType')).text + '"' if elem.find(oca_tag('OutcomeBasedOnType')) is not None else 'null'
 
     return f"{{\"appearanceoutcometype\":{appearanceoutcometype_val},\"outcomebasedontype\":{outcomebasedontype_val}}}"    
+
 
 def parse_appearances(case, db):
     """ for a case parse all the values for the oca_appearances
@@ -375,14 +381,12 @@ def parse_warrants(case, db):
 
     IndexNumberId = case.find(oca_tag('IndexNumberId')).text
 
-
     judgments = case.find(oca_tag('Judgments'))
 
     if judgments is None:
         return None
 
     for judgment in judgments.iter(oca_tag('Judgment')):
-
 
         JudgmentSequence = oca_extract(judgment, 'Sequence')
 
@@ -425,6 +429,7 @@ def parse_warrants(case, db):
         if rows:
             db.insert_rows(rows, 'oca_warrants_staging')
 
+
 def parse_case(case, db):
     """ for a case, remove it from the database if it already exists, 
     then determine if it needs to be deleted permantly, if not then 
@@ -450,6 +455,7 @@ def parse_case(case, db):
     parse_decisions(case, db)
     parse_judgments(case, db)
     parse_warrants(case, db)
+
 
 def parse_file(xml_file, db):
 

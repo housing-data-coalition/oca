@@ -35,11 +35,13 @@ class Database:
         self.db_url = db_url
         self.conn = psycopg2.connect(db_url) 
 
+
     def sql(self, SQL):
         """ executes single sql statement """
         with self.conn.cursor() as curs:
             curs.execute(SQL)
         self.conn.commit()
+
 
     def insert_rows(self, rows, table_name):
         """
@@ -61,6 +63,7 @@ class Database:
                 raise
         self.conn.commit()
 
+
     def execute_sql_file(self, sql_file):
         """
         Executes the provided sql file.
@@ -70,6 +73,7 @@ class Database:
 
         with open(file_path, 'r', encoding='utf-8') as f:
             self.sql(f.read())
+
 
     def export_csv(self, table_name, file_path):
         """ Exports tables to CSV files """
@@ -81,10 +85,12 @@ class Database:
 
         f.close()
 
+
     def dump_to(self, file_path):
         """ pg_dump the database to file """
         cmd = f"pg_dump {self.db_url} -Fc > {file_path}"
         os.system(cmd)
+
 
     def restore_from(self, file_path):
         """ pg_restore the database from file """

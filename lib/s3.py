@@ -18,7 +18,7 @@ def s3_client(aws_id, aws_key):
 	return s3
 
 
-def put_object(s3_client, dest_bucket_name, dest_object_name, src_data, content_type):
+def put_object(s3_client, dest_bucket_name, dest_object_name, src_data, content_type, cache_control=''):
 	"""Add an object to an Amazon S3 bucket
 
 	The src_data argument must be of type bytes or a string that references
@@ -28,6 +28,8 @@ def put_object(s3_client, dest_bucket_name, dest_object_name, src_data, content_
 	:param dest_bucket_name: string
 	:param dest_object_name: string
 	:param src_data: bytes of data or string reference to file spec
+	:param content_type: string to set for Content-Type header on file
+	:param cache_control: string to set for Cache-Control header on file (if not provided, header not set)
 	:return: True if src_data was added to dest_bucket/dest_object, otherwise
 	False
 	"""
@@ -49,13 +51,18 @@ def put_object(s3_client, dest_bucket_name, dest_object_name, src_data, content_
 					  ' for the argument \'src_data\' is not supported.')
 		return False
 
+	kwargs = {
+		'Bucket': dest_bucket_name, 
+		'Key': dest_object_name, 
+		'Body': object_data,
+		'ContentType': content_type
+	}
+
+	if cache_control != '':
+		kwargs['CacheControl'] = cache_control
+
 	try:
-		s3_client.put_object(
-			Bucket=dest_bucket_name, 
-			Key=dest_object_name, 
-			Body=object_data,
-			ContentType=content_type
-		)
+		s3_client.put_object(**kwargs)
 	except ClientError as e:
 		# AllAccessDisabled error == bucket not found
 		# NoSuchKey or InvalidRequest error == (dest bucket/obj == src bucket/obj)
@@ -65,6 +72,7 @@ def put_object(s3_client, dest_bucket_name, dest_object_name, src_data, content_
 		if isinstance(src_data, str):
 			object_data.close()
 	return True
+
 
 def get_matching_s3_keys(s3_client, bucket, prefix='', pattern=''):
     """
@@ -102,6 +110,7 @@ def get_matching_s3_keys(s3_client, bucket, prefix='', pattern=''):
         except KeyError:
             break
 
+
 class S3:
 	"""AWS S3 client for getting/putting objects to/from oca-data bucket"""
 
@@ -127,8 +136,11 @@ class S3:
 			'.dump': 'application/pgp-signature'
 		}[ext]
 
+		# date-updated image needs to have no-cache to be used in github readme
+		cache_control = 'no-cache' if content_type == 'image/png' else ''
+
 		# Put the object into the bucket
-		put_object(self.s3, 'oca-data', object_name, file_path, content_type)
+		put_object(self.s3, 'oca-data', object_name, file_path, content_type, cache_control)
 
 
 	def list_files(self, pattern, folder=''):
