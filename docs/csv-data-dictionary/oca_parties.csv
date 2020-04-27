@@ -1,0 +1,6 @@
+column_name,data_type,description,notes
+indexnumberid,text,"Unique number to identify the index (case). In this version of the data without personally identifying information, the true case index number that can be used to look up a specific case is replaced by a random number that only identifies a case within this dataset.",
+role,text,"Role of the party. (Ex: 'Petitioner', 'Respondent', 'Interested Party')",
+partytype,text,"The type of party. (Values: 'Person', 'Business', 'Agency')",
+representationtype,text,"The type of representation. (Values:  'Counsel', 'SRL' (Self Represented Litigant), 'No Appearance'). NOTE: 'No Appearance' means the party has not appeared at the courthouse to indicate representation.",
+undertenant,boolean,"Is the party an undertenant. 'true' if this party is an undertenant, 'false' otherwise.",

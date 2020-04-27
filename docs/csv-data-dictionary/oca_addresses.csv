@@ -1,0 +1,5 @@
+column_name,data_type,description,notes
+indexnumberid,text,"Unique number to identify the index (case). In this version of the data without personally identifying information, the true case index number that can be used to look up a specific case is replaced by a random number that only identifies a case within this dataset.",
+city,text,"The 'city' can be the borough/county or a neighborhood (eg. Jamaica, Flushing, etc.) for the property that the case concerns.",
+state,text,"The state of the property that the case concerns.",
+postalcode,text,"The Zip code for the property that the case concerns.",

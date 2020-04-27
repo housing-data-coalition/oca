@@ -1,0 +1,5 @@
+column_name,data_type,description,notes
+indexnumberid,text,"Unique number to identify the index (case). In this version of the data without personally identifying information, the true case index number that can be used to look up a specific case is replaced by a random number that only identifies a case within this dataset.",
+appearanceid,bigint,"Unique identifier for appearances that can be used to link to records in the oca_appearances table. This column is not in the original data, but created in the parsing process because there was no suitable identifier. The values in this column may change with future updates, so should not be used to identify records (only for joining oca_appearances and oca_appearance_outcomes tables).",
+appearanceoutcometype,text,"The type of outcome for the appearance (Ex: 'Reserved Decision', 'Dismissed')",
+outcomebasedontype,text,"What the outcome is based on (Ex: 'Conference', 'Hearing')",

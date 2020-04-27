@@ -1,0 +1,9 @@
+column_name,data_type,description,notes
+indexnumberid,text,"Unique number to identify the index (case). In this version of the data without personally identifying information, the true case index number that can be used to look up a specific case is replaced by a random number that only identifies a case within this dataset.",
+sequence,int,"A unique identifier (number) of a motion on this index. (Ex: '1', '2', ...)",
+motiontype,text,"The type of motion (Values: 'Order to Show Cause', 'General', 'Ex-Parte')",
+primaryrelief,text,"(Some Values: 'Restore to Possession', 'Restore to Calendar', 'Vacate Judgment')",
+fileddate,date,Date filed,
+filingpartiesroles,text[],"An array of the filing parties' roles (Some Values: 'Petitioner', 'Respondent')",
+motiondecision,text,"The decision for the motion (Some Values: 'Granted', 'Denied - Index Disposed')",
+motiondecisiondate,date,"The date of the decision for the motion.",

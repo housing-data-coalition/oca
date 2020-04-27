@@ -1,0 +1,5 @@
+column_name,data_type,description,notes
+indexnumberid,text,"Unique number to identify the index (case). In this version of the data without personally identifying information, the true case index number that can be used to look up a specific case is replaced by a random number that only identifies a case within this dataset.",
+causeofactiontype,text,"(Values: 'Violations', 'Article 7A', 'Illegal Lockout', 'Breach of Lease', 'Other', 'Part 137 - Disputed Attorney Fees', 'Breach of Warrant of Habitability', 'Property Damage', 'Non-Payment', 'Use and Occupancy', 'Holdover', 'Drug/Bawdy House (RPAPL 711&715)', 'Harassment with Violations', 'Harassment')",
+interestfromdate,date,,
+amount,numeric,"Dollar amount of the Cause of Action.",

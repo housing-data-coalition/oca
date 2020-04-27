@@ -1,0 +1,13 @@
+column_name,data_type,description,notes
+indexnumberid,text,"Unique number to identify the index (case). In this version of the data without personally identifying information, the true case index number that can be used to look up a specific case is replaced by a random number that only identifies a case within this dataset.",
+court,text,"The full name of the court. These include the Bronx, Queens, New York (Manhattan), Richmond (Staten Island), and Kings (Brooklyn) County Civil Courts, as well as the Redhook (Brooklyn) and Harlem (Manhattan) Community Justice Centers.",
+fileddate,date,"Date the index (case) was filed with the Court.",
+propertytype,text,"Indicates whether the property is 'Commercial' or 'Residential'.",
+classification,text,"The type of case. (Values: 'Breach of Warrant of Habitability', 'Non-Payment', 'Article 7A', 'HP', 'Holdover', 'Illegal Lockout', 'Harassment', 'Illegal Activity', 'HP with Harassment').",
+specialtydesignationtypes,text[],"A court-defined way to further classify an index (case). There can be multiple designations, so this column is stored as a text array. (Some Values: 'NYCHA', 'COOP/CONDO', 'Military', 'UA ZIP', etc.)",
+status,text,"Current status of the index (case). (Values: 'Active - Restored', 'Post Disposition - Appeal Pending', 'Disposed', 'Active - Appeal Pending', 'Disposed - Appeal Pending', 'Active', 'Active - Pending Further Review', 'Post Disposition')",
+disposeddate,date,"Date the index (case) was disposed (no longer active).",
+disposedreason,text,"The action that disposed of the case. Note that in addition to the broad type of reason there are other specific details included so there are many possible values for this column. However, in this version of the data any personally identifying information has been removed from values in thie column. (Ex: 'Motion(1)-Relief: Restore to Possession; Decision: Granted - Index Disposed', 'Judgment with Possession, with Warrant, Execution Stayed 10 days thru 10/12/2018', etc.)",
+firstpaper,text,"The filing instrument that initiated the index (case). (Values: 'Predicate OSC', 'Petition by Attorney', 'Petition by Self Represented Landlord', 'Petition by Self Represented Landlord - DIY', 'Commenced by OSC', 'Transfer From Another Court', 'Tenant Initiated - DIY', 'Tenant Initiated', 'Transfer From Civil Court', 'Commenced by Motion', 'Petition by Attorney Issued by Clerk')",
+primaryclaimtotal,numeric,"The total dollar amount of the primary claim (sum of all primary claim Cause of Actions).",
+dateofjurydemand,date,,

@@ -1,0 +1,13 @@
+column_name,data_type,description,notes
+indexnumberid,text,"Unique number to identify the index (case). In this version of the data without personally identifying information, the true case index number that can be used to look up a specific case is replaced by a random number that only identifies a case within this dataset.",
+sequence,int,"A unique identifier (number) of a judgment on this index. (Ex: '1', '2', ...)",
+amendedfromjudgmentsequence,int,"The unique identifier (number) of a judgment sequence this judgment was amended from. (Ex: '1', '2', ...)",
+judgmenttype,text,"Type of judgment (Ex: 'Failure to Answer', 'Failure to Appear', 'Hearing')",
+fileddate,date,,
+entereddatetime,timestamp,,
+withpossession,boolean,"'true' if a judgment grants possession of property, 'false' otherwise.",
+latestjudgmentstatus,text,"(Ex: 'Entered', 'Vacated', 'Partially Satisfied')",
+latestjudgmentstatusdate,date,,
+totaljudgmentamount,numeric,,
+creditorsroles,text[],"An array of the creditors' roles (Ex: 'Petitioner', 'Respondent')",
+debtorsroles,text[],"An array of the debtors' roles (Ex: 'Petitioner', 'Respondent')",

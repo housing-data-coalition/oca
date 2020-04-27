@@ -1,0 +1,7 @@
+column_name,data_type,description,notes
+indexnumberid,text,"Unique number to identify the index (case). In this version of the data without personally identifying information, the true case index number that can be used to look up a specific case is replaced by a random number that only identifies a case within this dataset.",
+eventname,text,"Name of the event. (Some Values: 'Stipulation of Discontinuance - Partial', 'Subpoena Issued', 'Income/Property Execution Returned', 'Counterclaim Filed', 'Marshal's Request for Warrant', 'Index Number Changed', 'Transfer From Civil Court', 'Answer Filed (Self Represented)', etc.)",
+fileddate,date,"Date filed",
+feetype,text,"(Values: 'Collected', 'Exempt', 'Waived by Judge')",
+filingpartiesroles,text[],"An array of the filing parties' roles (Some Values: 'Petitioner', 'Respondent')",
+answertype,text,"Type of answer (Values: 'Oral', 'Written')",
