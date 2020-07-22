@@ -2,7 +2,7 @@
 
 The [Housing Data Coalition](https://www.housingdatanyc.org/) (HDC) has received housing court filings data from the New York State Office of Court Administration (OCA). In this repository we manage the Extract-Transform-Load process for getting raw XML filings data from OCA via SFTP, parsing the nested XML data into a set of tables, and making those CSV files publicly available for download.
 
-To work with these data you can use the [`nycdb_oca`](https://github.com/austensen/nycdb_oca) plugin for [NYCDB](https://github.com/nycdb/nycdb) to automatically load all of the tables into a PostgreSQL database for analysis.
+To work with these data you can use the [NYCDB](https://github.com/nycdb/nycdb) to automatically load all of the tables into a PostgreSQL database for analysis. You can also find documentation about the data, included a comprehensize [data dictionary](https://docs.google.com/spreadsheets/d/1ccFFxP9dcTdDx0DqCrum8k6tsrhGv5lLbycVp5YsvS4) on the [NYCDB wiki](https://github.com/nycdb/nycdb/wiki/Dataset:-OCA-Housing-Court-Records).
 
 ## CSV Files
 
