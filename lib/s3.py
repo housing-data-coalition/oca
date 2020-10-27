@@ -12,7 +12,7 @@ def s3_client(aws_id, aws_key):
 		's3',
 		aws_access_key_id=aws_id,
 		aws_secret_access_key=aws_key,
-		config=Config(connect_timeout=10, read_timeout=100, retries={'max_attempts': 1})
+		config=Config(connect_timeout=10, read_timeout=100, retries={'max_attempts': 10})
 	)
 
 	return s3
