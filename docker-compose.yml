@@ -1,6 +1,8 @@
 version: '2'
 services:
   app:
+    depends_on: 
+      - db
     build: 
       context: .
       args: 

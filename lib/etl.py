@@ -199,6 +199,9 @@ def oca_etl(db_args, sftp_args, s3_args):
     # Update "last updated date" files on S3 for the latest file processed
     create_date_files(s3, new_sftp_zip_files[-1], pub_dir)
 
+    # TODO: upload in parallel
+    # http://ls.pwd.io/2013/06/parallel-s3-uploads-using-boto-and-threads-in-python/
+    
     # Upload csv files to public folder in S3 bucket
     print('Uploading public files to S3:')
     for f in os.listdir(pub_dir):
