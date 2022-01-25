@@ -1,20 +1,27 @@
-version: '2'
+version: '3'
+
 services:
   app:
-    depends_on: 
-      - db
     build: 
       context: .
+      dockerfile: Dockerfile
       args: 
         SFTP_HOST: ${SFTP_HOST}
     user: 'root'
     volumes:
       - .:/app
+    depends_on: 
+      - db
     links:
       - db
   db:
     image: postgres:9.6
     environment:
-      - POSTGRES_USER=oca
+      - POSTGRES_USER=postgres
       - POSTGRES_DB=oca
       - POSTGRES_PASSWORD=oca
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oca"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

@@ -6,7 +6,6 @@ __pycache__/
 data/
 data-raw/
 data-clean/
-.env
 venv/
 todo
 .DS_Store

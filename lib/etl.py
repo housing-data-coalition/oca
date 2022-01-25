@@ -179,7 +179,7 @@ def oca_etl(db_args, sftp_args, s3_args):
         with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
             parse_file(xml_file, db)
 
-        print('   - Updating appearance outcomes...')
+        print('\n   - Updating appearance outcomes...')
         db.execute_sql_file('update_appearance_outcomes.sql')
 
         print('  - Inserting from staging to main...')
