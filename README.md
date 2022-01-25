@@ -2,7 +2,21 @@
 
 The [Housing Data Coalition](https://www.housingdatanyc.org/) (HDC) has received housing court filings data from the New York State Office of Court Administration (OCA). In this repository we manage the Extract-Transform-Load process for getting raw XML filings data from OCA via SFTP, parsing the nested XML data into a set of tables, and making those CSV files publicly available for download.
 
-To work with these data you can use the [NYCDB](https://github.com/nycdb/nycdb) to automatically load all of the tables into a PostgreSQL database for analysis. You can also find documentation about the data, included a comprehensize [data dictionary](https://docs.google.com/spreadsheets/d/1ccFFxP9dcTdDx0DqCrum8k6tsrhGv5lLbycVp5YsvS4) on the [NYCDB wiki](https://github.com/nycdb/nycdb/wiki/Dataset:-OCA-Housing-Court-Records).
+To work with these data you can use the [NYCDB](https://github.com/nycdb/nycdb) to automatically load all of the tables into a PostgreSQL database for analysis. You can also find documentation about the data, including a [data dictionary](https://docs.google.com/spreadsheets/d/1GMDomQr8gEave6uLpLby9gQU0oMoGRL39kQdNbBJEqE) on the [NYCDB wiki](https://github.com/nycdb/nycdb/wiki/Dataset:-OCA-Housing-Court-Records).
+
+## Attribution
+
+When utilizing this work, please use one of the following attributions and links:
+
+> Data from the New York State Office of Court Administration [via the Housing Data Coalition](https://github.com/housing-data-coalition/oca) in collaboration with the [Right to Counsel Coalition](https://www.righttocounselnyc.org/).
+
+> Data from the New York State Office of Court Administration [via the Housing Data Coalition](https://github.com/housing-data-coalition/oca). This data has been obtained and made available through the collaborative efforts of the [Housing Data Coalition](https://www.housingdatanyc.org/), the [Right to Counsel Coalition](https://www.righttocounselnyc.org/), [BetaNYC](https://beta.nyc/), the [Association for Neighborhood and Housing Development](https://anhd.org/), the [University Neighborhood Housing Program](https://unhp.org), and [JustFix.nyc](https://www.justfix.nyc/).
+
+## License 
+
+This work is licensed under a [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License](http://creativecommons.org/licenses/by-nc-sa/4.0/). 
+
+<a rel="license" href="http://creativecommons.org/licenses/by-nc-sa/4.0/"><img alt="Creative Commons License" style="border-width:0" src="https://i.creativecommons.org/l/by-nc-sa/4.0/88x31.png" /></a>
 
 ## CSV Files
 
@@ -49,3 +63,5 @@ To run the whole process in the docker container run:
 ```
 docker-compose run app
 ```
+
+
