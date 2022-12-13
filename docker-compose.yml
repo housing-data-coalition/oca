@@ -11,7 +11,8 @@ services:
     volumes:
       - .:/app
     depends_on: 
-      - db
+      db:
+        condition: service_healthy
     links:
       - db
   db:
@@ -20,8 +21,9 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_DB=oca
       - POSTGRES_PASSWORD=oca
+
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U oca"]
-      interval: 10s
+      test: [ "CMD-SHELL", "pg_isready -U oca" ]
       timeout: 5s
-      retries: 5
+      interval: 1s
+      retries: 20
