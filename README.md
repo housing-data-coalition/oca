@@ -10,7 +10,7 @@ When utilizing this work, please use one of the following attributions and links
 
 > Data from the New York State Office of Court Administration [via the Housing Data Coalition](https://github.com/housing-data-coalition/oca) in collaboration with the [Right to Counsel Coalition](https://www.righttocounselnyc.org/).
 
-> Data from the New York State Office of Court Administration [via the Housing Data Coalition](https://github.com/housing-data-coalition/oca). This data has been obtained and made available through the collaborative efforts of the [Housing Data Coalition](https://www.housingdatanyc.org/), the [Right to Counsel Coalition](https://www.righttocounselnyc.org/), [BetaNYC](https://beta.nyc/), the [Association for Neighborhood and Housing Development](https://anhd.org/), the [University Neighborhood Housing Program](https://unhp.org), and [JustFix.nyc](https://www.justfix.nyc/).
+> Data from the New York State Office of Court Administration [via the Housing Data Coalition](https://github.com/housing-data-coalition/oca). This data has been obtained and made available through the collaborative efforts of the [Housing Data Coalition](https://www.housingdatanyc.org/), the [Right to Counsel Coalition](https://www.righttocounselnyc.org/), [BetaNYC](https://beta.nyc/), the [Association for Neighborhood and Housing Development](https://anhd.org/), the [University Neighborhood Housing Program](https://unhp.org), and [JustFix](https://www.justfix.org/).
 
 ## License 
 
