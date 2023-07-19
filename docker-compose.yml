@@ -28,3 +28,24 @@ services:
       timeout: 5s
       interval: 1s
       retries: 20
+    command:
+      # See https://osm2pgsql.org/doc/manual.html#tuning-the-postgresql-server
+      - "postgres"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "work_mem=25MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "wal_level=minimal"
+      - "-c"
+      - "checkpoint_timeout=30min"
+      - "-c"
+      - "max_wal_size=2GB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "max_wal_senders=0"
+      - "-c"
+      - "random_page_cost=1.0"
