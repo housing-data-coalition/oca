@@ -7,6 +7,7 @@ services:
       dockerfile: Dockerfile
       args: 
         SFTP_HOST: ${SFTP_HOST}
+        MODE: ${MODE}
     user: 'root'
     volumes:
       - .:/app
@@ -16,7 +17,7 @@ services:
     links:
       - db
   db:
-    image: postgres:9.6
+    image: postgres:10.21-alpine
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_DB=oca

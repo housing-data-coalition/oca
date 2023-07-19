@@ -1,10 +1,8 @@
 # NYC Housing Court Filings
 
-The [Housing Data Coalition](https://www.housingdatanyc.org/) (HDC) has received housing court filings data from the New York State Office of Court Administration (OCA). In this repository we manage the Extract-Transform-Load process for getting raw XML filings data from OCA via SFTP, parsing the nested XML data into a set of tables, and making those CSV files publicly available for download.
+The [Housing Data Coalition](https://www.housingdatanyc.org/) (HDC) has received housing court filings data from the New York State Office of Court Administration (OCA). In this repository we manage the Extract-Transform-Load (ETL) process for getting raw XML filings data from OCA via SFTP, parsing the nested XML data into a set of tables, and making those CSV files publicly available for download.
 
 To work with these data you can use the [NYCDB](https://github.com/nycdb/nycdb) to automatically load all of the tables into a PostgreSQL database for analysis. You can also find documentation about the data, including a [data dictionary](https://docs.google.com/spreadsheets/d/1GMDomQr8gEave6uLpLby9gQU0oMoGRL39kQdNbBJEqE) on the [NYCDB wiki](https://github.com/nycdb/nycdb/wiki/Dataset:-OCA-Housing-Court-Records).
-
-## Attribution
 
 When utilizing this work, please use one of the following attributions and links:
 
@@ -43,11 +41,11 @@ The data we receive from OCA is an extract of all landlord and tenant cases in N
 
 For information about the details of various components, see [`/lib`](/lib)
 
-## Setup
+### Setup
 
 First, you will only be able to run this yourself if you have HDC's credentials to access to the SFTP to get the raw data transfered from OCA and access to the private AWS S3 where those files are stored. 
 
-You will need Docker.
+You will need Docker and Docker Compose.
 
 First, you'll want to create an `.env` file by copying the example one:
 
@@ -64,4 +62,34 @@ To run the whole process in the docker container run:
 docker-compose run app
 ```
 
+### Modes
 
+This ETL process has two modes: Level 1 and Level 2. Level 1 accesses the SFTP for general OCA usage and produces an `oca_addresses` CSV file with a column for zipcode. Level 2 accesses a more restrictive SFTP and produces an `oca_addresses` CSV file with the building address columns (address without apartment or unit number) and an additional `oca_addresses_with_bbl` CSV file that only displays rows and data if the Borough-Block-Lot (BBL) or tax lot has 10 or more units. To switch between modes, edit the `MODE` variable in the .env file.
+
+Mode 1 can run on both SFTP Level 1 and Level 2, but Mode 2 can only run on the Level 2 SFTP. Additional security measures need to be put in place for the database, the `oca_addresses` table, and the CSV of the Level 2 data.
+
+Mode 2 adds PLUTO as an additional dataset and installs the matching version of [GeoSupport](https://www.nyc.gov/site/planning/data-maps/open-data/dwn-gde-home.page).
+
+You need to re-run `docker-compose build` when switching modes. To see echo outputs in your terminal for debugging, run `docker-compose build --progress=plain`.
+
+### (Optional) RDS Clone
+
+If you have an existing database on Amazon, you can use S3 to "clone" the CSV files to the RDS service (or you can do a sql.dump). To enable add  the RDS database uri to the `CLONED_DATABASE_URL` variable in the .env file. After the main process is done, additional scripts will overwrite the contents on the RDS. Make sure there are proper permissions for the RDS to connect to S3 (if there is a bucket policy).
+
+```json
+{
+    "Version": "2012-10-17",
+    "Id": "Policy1234",
+    "Statement": [
+        {
+            "Sid": "Stmt1623892536589",
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::..."
+            },
+            "Action": "s3:*",
+            "Resource": "arn:aws:s3:::..."
+        }
+    ]
+}
+```
