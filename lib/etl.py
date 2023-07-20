@@ -4,6 +4,11 @@ import zipfile
 import requests
 import re
 
+import pandas as pd
+import multiprocessing
+import functools
+import sys
+
 from .database import Database
 from .s3 import S3
 from .sftp import Sftp
@@ -124,7 +129,7 @@ def create_date_files(s3, data_file, local_dir):
     open(img_file, 'wb').write(r.content)
 
 
-def oca_etl(db_args, sftp_args, s3_args):
+def oca_etl(db_args, sftp_args, s3_args, mode, remote_rds):
     """ 
     Extract files from SFTP, parse cases, upload to S3 bucket
     """
@@ -194,6 +199,39 @@ def oca_etl(db_args, sftp_args, s3_args):
         csv_filepath = os.path.join(pub_dir, f"{t}.csv")
         db.export_csv(t, csv_filepath)
 
+    if mode == 2:
+        # Geocode records before uploading to S3
+        from lib.geocode_record import geocode_record
+        # Geocode 
+        input_csv = Path(pub_dir) / 'oca_addresses.csv'
+        output_csv = Path(pub_dir) /'oca_addresses.csv'
+        addr_cols = ['street1', 'city', 'postalcode']
+
+        #keep all cols
+        keep_cols = lambda x: x
+
+        df = pd.read_csv(
+            input_csv, 
+            dtype = str,
+            index_col = False, 
+            usecols=keep_cols,
+            keep_default_na=False
+        )
+
+        print(f'Geocoding {len(df)} entries in {output_csv}.')
+
+        records = df.to_dict('records')
+
+        with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+            it = pool.map(functools.partial(geocode_record, addr_cols=addr_cols), records, 10000)
+
+        pd.DataFrame(it).to_csv(output_csv, index=False)
+
+        #check if pluto exists and matches the pluto version of the geosupport
+
+        #create view and export as a csv, add file to OCA_TABLES for import into s3
+
+
     s3 = S3(**s3_args)
 
     # Update "last updated date" files on S3 for the latest file processed
@@ -213,4 +251,8 @@ def oca_etl(db_args, sftp_args, s3_args):
     for f in os.listdir(priv_dir):
         print('-', f)
         s3.upload_file(f"{S3_PRIVATE_FOLDER}/{f}", os.path.join(priv_dir, f))
+
+    # use s3 import to overwrite tables in the remote RDS
+    if remote_rds:
+        print('Importing csvs to the RDS:')
 

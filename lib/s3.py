@@ -115,7 +115,7 @@ class S3:
 	"""AWS S3 client for getting/putting objects to/from oca-data bucket"""
 
 	def __init__(self, aws_id, aws_key, aws_bucket_name):
-		self.s3 = s3_client(aws_id, aws_key,)
+		self.s3 = s3_client(aws_id, aws_key)
 		self.bucket_name = aws_bucket_name
 
 

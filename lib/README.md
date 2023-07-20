@@ -43,3 +43,7 @@ This is the main script that does the full process.
 ### `oca_update.py`
 
 Finally, this file (in the top level of this repo) simply pulls environment variables from the `.env` file and runs `etl.py` to process an update to the data. 
+
+### `geocode_record.py`
+
+Uses usaddress to normalize addresses before sending it off to NYC's Geosupport to get bin, bbl, community districts, census tracts, council districts, and status messages.

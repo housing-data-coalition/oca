@@ -6,3 +6,5 @@ psycopg2
 urllib3
 pysftp
 requests
+pandas
+usaddress

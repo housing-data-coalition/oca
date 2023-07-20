@@ -64,7 +64,7 @@ docker-compose run app
 
 ### Modes
 
-This ETL process has two modes: Level 1 and Level 2. Level 1 accesses the SFTP for general OCA usage and produces an `oca_addresses` CSV file with a column for zipcode. Level 2 accesses a more restrictive SFTP and produces an `oca_addresses` CSV file with the building address columns (address without apartment or unit number) and an additional `oca_addresses_with_bbl` CSV file that only displays rows and data if the Borough-Block-Lot (BBL) or tax lot has 10 or more units. To switch between modes, edit the `MODE` variable in the .env file.
+This ETL process has two modes: Level 1 and Level 2. Level 1 accesses the SFTP for general OCA usage and produces an `oca_addresses` CSV file with a column for zipcode. Level 2 accesses a more restrictive SFTP and produces an `oca_addresses` CSV file with the building address columns (address without apartment or unit number) and an additional `oca_addresses_with_bbl` CSV file that only displays rows and data if the Borough-Block-Lot (BBL) or tax lot has 11 or more units. To switch between modes, edit the `MODE` variable in the .env file.
 
 Mode 1 can run on both SFTP Level 1 and Level 2, but Mode 2 can only run on the Level 2 SFTP. Additional security measures need to be put in place for the database, the `oca_addresses` table, and the CSV of the Level 2 data.
 
@@ -76,6 +76,10 @@ You need to re-run `docker-compose build` when switching modes. To see echo outp
 
 If you have an existing database on Amazon, you can use S3 to "clone" the CSV files to the RDS service (or you can do a sql.dump). To enable add  the RDS database uri to the `CLONED_DATABASE_URL` variable in the .env file. After the main process is done, additional scripts will overwrite the contents on the RDS. Make sure there are proper permissions for the RDS to connect to S3 (if there is a bucket policy).
 
+![Adding IAM to allow for S3 access](./docs/rds_iam.png)
+
+### General rules for the S3 Bucket
+
 ```json
 {
     "Version": "2012-10-17",
@@ -85,10 +89,24 @@ If you have an existing database on Amazon, you can use S3 to "clone" the CSV fi
             "Sid": "Stmt1623892536589",
             "Effect": "Allow",
             "Principal": {
-                "AWS": "arn:aws:iam::..."
+                "AWS": "arn:aws:iam::...user or api account"
             },
             "Action": "s3:*",
-            "Resource": "arn:aws:s3:::..."
+            "Resource": "arn:aws:s3:::...bucket or specific folder..."
+        },
+         {
+            "Sid": "IPAllow",
+            "Effect": "Allow",
+            "Principal": "*",
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::oca-2-dev/public/*",
+            "Condition": {
+                "IpAddress": {
+                    "aws:SourceIp": [
+                        "192.168.1.1"
+                    ]
+                }
+            }
         }
     ]
 }
