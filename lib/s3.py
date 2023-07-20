@@ -114,14 +114,15 @@ def get_matching_s3_keys(s3_client, bucket, prefix='', pattern=''):
 class S3:
 	"""AWS S3 client for getting/putting objects to/from oca-data bucket"""
 
-	def __init__(self, aws_id, aws_key):
-		self.s3 = s3_client(aws_id, aws_key)
+	def __init__(self, aws_id, aws_key, aws_bucket_name):
+		self.s3 = s3_client(aws_id, aws_key,)
+		self.bucket_name = aws_bucket_name
 
 
 	def download_file(self, object_name, file_path):
 
 		# Retrieve the object
-		self.s3.download_file('oca-data', object_name, file_path)
+		self.s3.download_file(self.bucket_name, object_name, file_path)
 
 
 	def upload_file(self, object_name, file_path):
@@ -140,7 +141,7 @@ class S3:
 		cache_control = 'no-cache' if content_type == 'image/png' else ''
 
 		# Put the object into the bucket
-		put_object(self.s3, 'oca-data', object_name, file_path, content_type, cache_control)
+		put_object(self.s3, self.bucket_name, object_name, file_path, content_type, cache_control)
 
 
 	def list_files(self, pattern, folder=''):
@@ -148,7 +149,7 @@ class S3:
 		if folder != '' and not folder.endswith('/'):
 			folder = folder + '/'
 
-		all_files = get_matching_s3_keys(self.s3, 'oca-data', folder, pattern)
+		all_files = get_matching_s3_keys(self.s3, self.bucket_name, folder, pattern)
 
 		files = [os.path.basename(x) for x in all_files if x != folder]
 

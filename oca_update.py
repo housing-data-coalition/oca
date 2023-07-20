@@ -15,7 +15,8 @@ def main():
 
 	s3_args = {
 		'aws_id': os.environ.get('AWS_ACCESS_KEY_ID', ''),
-		'aws_key': os.environ.get('AWS_SECRET_ACCESS_KEY', '')
+		'aws_key': os.environ.get('AWS_SECRET_ACCESS_KEY', ''),
+		'aws_bucket_name': os.environ.get('AWS_S3_BUCKET_NAME', '')
 	}
 
 	sftp_args = {
