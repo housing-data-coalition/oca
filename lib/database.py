@@ -42,6 +42,10 @@ class Database:
             curs.execute(SQL)
         self.conn.commit()
 
+    def sql_fetch_one(self, SQL):
+        with self.conn.cursor() as curs:
+            curs.execute(SQL)
+            return curs.fetchone()
 
     def insert_rows(self, rows, table_name):
         """

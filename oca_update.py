@@ -27,9 +27,12 @@ def main():
 	}
 
 	mode = os.environ.get('MODE', '')
-	remote_rds = os.environ.get('CLONED_DATABASE_URL', '')
 
-	oca_etl(db_args, sftp_args, s3_args, mode, remote_rds)
+	remote_db_args = {
+		'db_url': os.environ.get('CLONED_DATABASE_URL', '')
+	}
+
+	oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args)
 
 if __name__== "__main__":
 	main()

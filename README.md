@@ -74,7 +74,11 @@ You need to re-run `docker-compose build` when switching modes. To see echo outp
 
 ### (Optional) RDS Clone
 
-If you have an existing database on Amazon, you can use S3 to "clone" the CSV files to the RDS service (or you can do a sql.dump). To enable add  the RDS database uri to the `CLONED_DATABASE_URL` variable in the .env file. After the main process is done, additional scripts will overwrite the contents on the RDS. Make sure there are proper permissions for the RDS to connect to S3 (if there is a bucket policy).
+If you have an existing database on Amazon, you can use S3 to "clone" the CSV files to the RDS service (or you can do a sql.dump). To enable add  the RDS database uri to the `CLONED_DATABASE_URL` variable in the .env file. 
+
+Make sure to run `CREATE EXTENSION aws_s3 CASCADE;` as you may encounter the error message `schema "aws_commons" does not exist"` if you do not. Read [this](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_PostgreSQL.S3Import.html) for more details on setting up Postgresql for s3 imports.
+
+After the main process is done, additional scripts will overwrite the contents on the RDS. Make sure there are proper permissions for the RDS to connect to S3 (if there is a bucket policy).
 
 ![Adding IAM to allow for S3 access](./docs/rds_iam.png)
 

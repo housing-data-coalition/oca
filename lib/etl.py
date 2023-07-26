@@ -1,4 +1,5 @@
 import os
+import io
 import shutil
 import zipfile
 import requests
@@ -129,7 +130,7 @@ def create_date_files(s3, data_file, local_dir):
     open(img_file, 'wb').write(r.content)
 
 
-def oca_etl(db_args, sftp_args, s3_args, mode, remote_rds):
+def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     """ 
     Extract files from SFTP, parse cases, upload to S3 bucket
     """
@@ -199,7 +200,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_rds):
         csv_filepath = os.path.join(pub_dir, f"{t}.csv")
         db.export_csv(t, csv_filepath)
 
-    if mode == 2:
+    if mode == "2":
         # Geocode records before uploading to S3
         from lib.geocode_record import geocode_record
         # Geocode 
@@ -253,6 +254,60 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_rds):
         s3.upload_file(f"{S3_PRIVATE_FOLDER}/{f}", os.path.join(priv_dir, f))
 
     # use s3 import to overwrite tables in the remote RDS
-    if remote_rds:
+    if mode == "2" and remote_db_args['db_url']:
         print('Importing csvs to the RDS:')
+        remote_db = Database(**remote_db_args)
+        
+        # reset tables from scratch
+        remote_db.execute_sql_file('create_tables.sql')
 
+        # import tables from s3
+        for t in OCA_TABLES:
+            remote_db.sql(f"""
+                SELECT aws_s3.table_import_from_s3(
+                '{t}', '', '(FORMAT CSV, HEADER)',
+                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/{t}.csv', 'us-east-1'),
+                aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
+            );
+            """)
+            print(f'Uploaded {t} table to remote db')
+        
+        # import pluto if it doesn't exist
+        if not remote_db.sql_fetch_one(
+            "SELECT * FROM information_schema.tables WHERE table_name = 'pluto'"):
+            print('Creating pluto as a table in the remote db:')
+
+            # download pluto 
+            print('downloading pluto')
+            PLUTO_CSV_URL = 'https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/nyc_pluto_23v1_2_csv.zip'
+            response = requests.get(PLUTO_CSV_URL)
+            content = response.content
+            z = zipfile.ZipFile(io.BytesIO(response.content))
+            pluto_zip_file = z.namelist()[0]
+            z.extract(pluto_zip_file, pub_dir)
+
+            # rename and upload to s3
+            pluto_file = os.path.join(pub_dir, "pluto.csv")
+            os.rename(os.path.join(pub_dir, pluto_zip_file), pluto_file)
+            print('uploading to s3')
+            s3.upload_file(f"{S3_PUBLIC_FOLDER}/pluto.csv", pluto_file)
+
+            print('importing to db')
+            remote_db.execute_sql_file('create_pluto_table.sql')
+            remote_db.sql(f"""
+                SELECT aws_s3.table_import_from_s3(
+                'pluto', '', '(FORMAT CSV, HEADER)',
+                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/pluto.csv', 'us-east-1'),
+                aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
+            );
+            """)
+
+
+        # create views and grant access to folks
+        remote_db.execute_sql_file('create_addresses_views.sql')
+
+        # download bbl view as csv and upload to s3
+        table = "oca_addresses_with_bbl"
+        csv_filepath = os.path.join(pub_dir, f"{table}.csv")
+        remote_db.export_csv(table, csv_filepath)
+        s3.upload_file(f"{S3_PUBLIC_FOLDER}/{table}.csv", os.path.join(pub_dir, f"{table}.csv"))
