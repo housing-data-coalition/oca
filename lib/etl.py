@@ -4,6 +4,8 @@ import shutil
 import zipfile
 import requests
 import re
+# TODO - replace os.path with Pathlib and its '/' operator
+from pathlib import Path 
 
 import pandas as pd
 import multiprocessing
@@ -141,7 +143,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
 
     s3 = S3(**s3_args)
 
-    # For debugging only
+    # # For debugging only
     # priv_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data-private'))
     # pub_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data-public'))
 
@@ -152,7 +154,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     # Get list of new files to download from SFTP
     new_sftp_zip_files = list_new_data_files(sftp, s3)
 
-    # If there are no new files we can stop everything here. 
+    # # If there are no new files we can stop everything here. 
     if not new_sftp_zip_files:
         print('No new files to download from SFTP. Stopping process.')
         return True
@@ -170,6 +172,19 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
 
     # For each of the new data files, parse it into the database
     local_zip_files = [os.path.join(priv_dir, f) for f in new_sftp_zip_files]
+
+    # # For debugging only
+    # # When sql dump fails, grab zips from s3 backup
+    # aws_id = s3_args['aws_id']
+    # aws_key = s3_args['aws_key']
+    # aws_bucket_name = 'oca-level2-data'
+    # backup_s3 = S3(aws_id, aws_key, aws_bucket_name)
+    # for f in backup_s3.list_files('.+\.zip', S3_PRIVATE_FOLDER):
+    #     backup_s3.download_file(f"{S3_PRIVATE_FOLDER}/{f}", os.path.join(priv_dir, f))
+    # def sort_by_date(file):
+    #     r = re.search(r'(\d+.+)\.zip', file).group(0).replace('.',' ')
+    #     return r
+    # local_zip_files = sorted([os.path.join(priv_dir, f) for f in os.listdir(priv_dir)], key = sort_by_date)
 
     # For each zipfile, rebuild the staging tables, unzip the XML file and 
     # parse it into the staging tables, then insert all the newly parsed records 
@@ -202,7 +217,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
 
     if mode == "2":
         # Geocode records before uploading to S3
-        from lib.geocode_record import geocode_record
+        from .geocode_record import geocode_record
         # Geocode 
         input_csv = Path(pub_dir) / 'oca_addresses.csv'
         output_csv = Path(pub_dir) /'oca_addresses.csv'
