@@ -271,10 +271,10 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
 
         pd.DataFrame(it).to_csv(output_csv, index=False)
 
-        #check if pluto exists and matches the pluto version of the geosupport
+        del df
+        del it
 
-        #create view and export as a csv, add file to OCA_TABLES for import into s3
-
+        # TODO - check if pluto exists and matches the pluto version of the geosupport
 
     s3 = S3(**s3_args)
 

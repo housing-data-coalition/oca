@@ -41,7 +41,7 @@ The data we receive from OCA is an extract of all landlord and tenant cases in N
 
 For information about the details of various components, see [`/lib`](/lib)
 
-### Setup
+### Local Setup
 
 First, you will only be able to run this yourself if you have HDC's credentials to access to the SFTP to get the raw data transfered from OCA and access to the private AWS S3 where those files are stored. 
 
@@ -72,17 +72,8 @@ Mode 2 adds PLUTO as an additional dataset and installs the matching version of 
 
 You need to re-run `docker-compose build` when switching modes. To see echo outputs in your terminal for debugging, run `docker-compose build --progress=plain`.
 
-### (Optional) RDS Clone
 
-If you have an existing database on Amazon, you can use S3 to "clone" the CSV files to the RDS service (or you can do a sql.dump). To enable add  the RDS database uri to the `CLONED_DATABASE_URL` variable in the .env file. 
-
-Make sure to run `CREATE EXTENSION aws_s3 CASCADE;` as you may encounter the error message `schema "aws_commons" does not exist"` if you do not. Read [this](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_PostgreSQL.S3Import.html) for more details on setting up Postgresql for s3 imports.
-
-After the main process is done, additional scripts will overwrite the contents on the RDS. Make sure there are proper permissions for the RDS to connect to S3 (if there is a bucket policy).
-
-![Adding IAM to allow for S3 access](./docs/rds_iam.png)
-
-### General rules for the S3 Bucket
+### General rules for setting up a S3 Bucket
 
 ```json
 {
@@ -115,3 +106,35 @@ After the main process is done, additional scripts will overwrite the contents o
     ]
 }
 ```
+
+### (Optional) Running on AWS ECR and Lambda
+
+Setup [AWS CLI](https://aws.amazon.com/cli/) and create an ECR repository.
+
+```
+cp .env.example .env   # fill all the credentials. Change the db to a remote dbi instead of the local docker.
+
+aws configure
+
+docker build -t oca-weekly --build-arg MODE=2 --build-arg SFTP_HOST=sftp.[rest of the url] .
+```
+
+Follow the push commands. You can to the screen by clicking into the repository you create and on the "View push commands" on the right below the breadcrumbs. Skip the second command `docker build -t ...`
+
+![Push commands](./docs/ecr-push-commands.png)
+
+Now in Lambda, create a new function from a Container Image and then 'Browse Images'.
+
+#### Tiggers
+
+![Setting up a trigger](./docs/lambda-tigger.png)
+
+### (Optional) RDS Clone
+
+If you have an existing database on Amazon, you can use S3 to "clone" the CSV files to the RDS service (or you can do a sql.dump). To enable add  the RDS database uri to the `CLONED_DATABASE_URL` variable in the .env file. 
+
+Make sure to run `CREATE EXTENSION aws_s3 CASCADE;` as you may encounter the error message `schema "aws_commons" does not exist"` if you do not. Read [this](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_PostgreSQL.S3Import.html) for more details on setting up Postgresql for s3 imports.
+
+After the main process is done, additional scripts will overwrite the contents on the RDS. Make sure there are proper permissions for the RDS to connect to S3 (if there is a bucket policy).
+
+![Adding IAM to allow for S3 access](./docs/rds_iam.png)

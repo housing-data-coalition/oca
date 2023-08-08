@@ -20,10 +20,10 @@ RUN apt-get install -y \
 ARG MODE
 
 # check the latest version here https://www.nyc.gov/site/planning/data-maps/open-data/dwn-gdelx.page
-ARG RELEASE=23b
-ARG MAJOR=23
-ARG MINOR=2
-ARG PATCH=0
+ENV RELEASE=23c
+ENV MAJOR=23
+ENV MINOR=3
+ENV PATCH=0
 WORKDIR /geosupport
 
 RUN echo $MODE
