@@ -91,5 +91,5 @@ CREATE TABLE pluto (
 	dcpedited varchar(1) NULL,
 	latitude float8 NULL,
 	longitude float8 NULL,
-	notes varchar(1) NULL
+	notes text NULL
 );

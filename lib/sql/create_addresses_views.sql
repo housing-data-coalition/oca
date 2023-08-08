@@ -31,10 +31,10 @@ create view oca_addresses_with_bbl as
 		pluto using(bbl);
 
 
--- Re grant access
-GRANT ALL ON ALL TABLES IN SCHEMA public TO jacob;
-GRANT ALL ON ALL TABLES IN SCHEMA public TO  lucy;
-GRANT ALL ON ALL TABLES IN SCHEMA public TO  maxwell;
+-- -- Re grant access
+-- GRANT ALL ON ALL TABLES IN SCHEMA public TO jacob;
+-- GRANT ALL ON ALL TABLES IN SCHEMA public TO  lucy;
+-- GRANT ALL ON ALL TABLES IN SCHEMA public TO  maxwell;
 
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO jweisberg;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO select_only;
+-- GRANT SELECT ON ALL TABLES IN SCHEMA public TO jweisberg;
+-- GRANT SELECT ON ALL TABLES IN SCHEMA public TO select_only;

@@ -1,8 +1,8 @@
 import urllib.parse
 import psycopg2
 import psycopg2.extras
+from psycopg2 import sql
 import os
-
 
 # https://github.com/nycdb/nycdb/blob/master/src/nycdb/sql.py
 def insert_many(table_name, rows):
@@ -89,6 +89,28 @@ class Database:
 
         f.close()
 
+    def import_csv(self, table_name, file_path):
+        """ Imports a CSV file to existing table """
+
+        f = open(file_path, 'r')
+
+        with self.conn.cursor() as curs:
+            curs.copy_expert(f'COPY {table_name} FROM STDIN WITH CSV HEADER', f)
+
+        self.conn.commit()
+        f.close()
+
+
+
+    def export_view_as_csv(self, table_name, file_path):
+        """ Exports tables to CSV files """
+        
+        f = open(file_path, 'w')
+
+        with self.conn.cursor() as curs:
+            curs.copy_expert(f"COPY (SELECT * FROM {table_name}) TO STDOUT WITH CSV HEADER", f)
+
+        f.close()
 
     def dump_to(self, file_path):
         """ pg_dump the database to file """
