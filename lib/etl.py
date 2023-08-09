@@ -93,6 +93,7 @@ def prep_db(s3, db, local_dir):
     if s3.list_files('oca.dump', S3_PRIVATE_FOLDER):
         print('Rebuilding tables from SQL dump')
         s3.download_file(f"{S3_PRIVATE_FOLDER}/oca.dump", os.path.join(local_dir, 'oca.dump'))
+        db.execute_sql_file('create_tables.sql')
         db.restore_from(os.path.join(local_dir, 'oca.dump'))
     else:
         print('Creating tables from scratch')
@@ -345,6 +346,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         db.execute_sql_file('create_addresses_views.sql')
 
         # download bbl view as csv and upload to s3
+        print("Creating oca_addresses_with_bbl and uploadng to S3")
         view = "oca_addresses_with_bbl"
         csv_filepath = os.path.join(pub_dir, f"{view}.csv")
         db.export_view_as_csv(view, csv_filepath)

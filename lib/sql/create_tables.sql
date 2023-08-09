@@ -1,3 +1,5 @@
+DROP VIEW IF EXISTS oca_addresses_with_bbl CASCADE;
+DROP VIEW IF EXISTS oca_addresses_with_ct CASCADE;
 
 DROP TABLE IF EXISTS oca_index CASCADE;
 CREATE TABLE IF NOT EXISTS oca_index (
