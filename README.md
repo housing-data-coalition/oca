@@ -107,6 +107,9 @@ You need to re-run `docker-compose build` when switching modes. To see echo outp
 }
 ```
 
+<!-- 
+the max timeout of 15 minutes. this does not provide much flexibility for longer runtimes.
+
 ### (Optional) Running on AWS ECR and Lambda
 
 Setup [AWS CLI](https://aws.amazon.com/cli/) and create an ECR repository.
@@ -116,18 +119,23 @@ cp .env.example .env   # fill all the credentials. Change the db to a remote dbi
 
 aws configure
 
-docker build -t oca-weekly --build-arg MODE=2 --build-arg SFTP_HOST=sftp.[rest of the url] .
+docker build . -t oca-weekly --build-arg MODE=2 --build-arg SFTP_HOST=sftp.[rest of the url] .
 ```
 
 Follow the push commands. You can to the screen by clicking into the repository you create and on the "View push commands" on the right below the breadcrumbs. Skip the second command `docker build -t ...`
 
 ![Push commands](./docs/ecr-push-commands.png)
 
-Now in Lambda, create a new function from a Container Image and then 'Browse Images'.
+Now in Lambda, create a new function from a Container Image and then 'Browse Images'. *You need to replace / deploy a new image any time you update the ECR image.*  
+
+Increase Memory to `10240` MB and Ephemeral storage to `8000` MB. AND Timeout to `15` minutes.
+
 
 #### Tiggers
 
-![Setting up a trigger](./docs/lambda-tigger.png)
+![Setting up a trigger](./docs/lambda-tigger.png) 
+
+-->
 
 ### (Optional) RDS Clone
 

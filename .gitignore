@@ -8,3 +8,5 @@ venv/
 todo
 .DS_Store
 scratch.py
+
+notebooks/

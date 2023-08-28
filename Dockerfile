@@ -43,9 +43,9 @@ ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/geosupport/version-${RELEASE}_${MAJOR}.${M
 
 # Authorize SSH Host for SFTP connection
 ARG SFTP_HOST
-RUN mkdir -p /root/.ssh && \
-    chmod 0700 /root/.ssh && \
-    ssh-keyscan -t dsa ${SFTP_HOST} >> /root/.ssh/known_hosts
+RUN mkdir -p ~/.ssh && \
+    chmod 0700 ~/.ssh && \
+    ssh-keyscan -t dsa ${SFTP_HOST} >> ~/.ssh/known_hosts
 
 COPY . /app
 

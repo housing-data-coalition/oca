@@ -17,13 +17,13 @@ services:
     links:
       - db
   db:
-    image: postgres:10.21-alpine
+    image: postgres:15.3-alpine
     environment:
       - POSTGRES_DB=oca
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=oca
-    # ports:
-    #   - 5432:5432
+    ports:
+      - 5432:5432
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB" ]
       timeout: 5s

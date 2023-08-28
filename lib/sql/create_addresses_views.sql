@@ -30,6 +30,22 @@ create view oca_addresses_with_bbl as
 	left join 
 		pluto using(bbl);
 
+create view oca_addresses_with_ct as
+	select 
+		indexnumberid,
+		geoid,
+		-- namelsad,
+		countyfp,
+		city,
+		state,
+		postalcode,
+		grc,
+		grc2,
+		msg,
+		msg2
+	from oca_addresses o 
+	join tracts t 
+	on st_intersects(o.geom, t.geom);
 
 -- -- Re grant access
 -- GRANT ALL ON ALL TABLES IN SCHEMA public TO jacob;

@@ -8,3 +8,4 @@ pysftp
 requests
 pandas
 usaddress
+censusgeocode

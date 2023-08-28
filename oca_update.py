@@ -2,6 +2,7 @@
 
 import dotenv
 import os
+from pathlib import Path
 
 from lib.etl import oca_etl
 
