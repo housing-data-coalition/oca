@@ -4,12 +4,15 @@ import shutil
 import zipfile
 import requests
 import re
+from datetime import datetime
 # TODO - replace os.path with Pathlib and its '/' operator
 from pathlib import Path 
 
+import numpy as np
 import pandas as pd
 import multiprocessing
 import functools
+from itertools import repeat
 import sys
 
 from .database import Database
@@ -191,7 +194,8 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     # otherwise we create the tables fresh.
     prep_db(s3, db, priv_dir)
 
-    # If there are new files, download them
+    # If there are new files, download them.
+    sftp = Sftp(**sftp_args) # Refresh connection since prep_db sometimes takes a while and socket will close
     print('Downloading new files from SFTP:')
     for f in new_sftp_zip_files:
         print('-', f)
@@ -246,7 +250,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
 
     if mode == "2":
         # Geocode records before uploading to S3
-        from .geocode_record import geocode_record
+        from .geocode_record import geocode_record, geocode_using_census_batch
         # Geocode 
         input_csv = Path(pub_dir) / 'oca_addresses.csv'
         output_csv = Path(pub_dir) /'oca_addresses.csv'
@@ -263,19 +267,45 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
             keep_default_na=False
         )
 
-        print(f'Geocoding {len(df)} entries in {output_csv}.')
+        #filter for only records that need to be geocoded
+        df_1 = df[(((pd.isna(df['lat'])) | (df['lat'] == '')) & (df['house_number'] != ''))].copy().reset_index()
+        print(f'Geocoding {len(df_1)} entries in {output_csv}.')
 
-        records = df.to_dict('records')
+        records = df_1.to_dict('records')
 
+        # Geocode records using NYC GeoSupport
+        # TODO - check if pluto in the database matches the pluto version of the geosupport
         with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
-            it = pool.map(functools.partial(geocode_record, addr_cols=addr_cols), records, 10000)
+            it = pd.DataFrame(pool.map(functools.partial(geocode_record, addr_cols=addr_cols), records, 10000))
 
-        pd.DataFrame(it).to_csv(output_csv, index=False)
+        del df_1 # delete unused objects to avoid docker's memory error / 137
+        del records 
+        
+        # Geocode other records using the US Batch Census Geocoder
+        #   Sub-select for all addresses that are missing latitude; also needs to have a house number
+        df_2 = it[(((pd.isna(it['lat'])) | (it['lat'] == '')))].copy().reset_index()
+        print(f'Geocoding {len(df_2)} entries in {output_csv} using another geocoder. {datetime.now()}')
 
+        # # For debugging only
+        # # ---
+        # # data_split = np.split(df_2, range(chunk_size, df_2.shape[0], 10000))
+        # # geocode_using_census_batch(data_split[2], pub_dir)
+
+        with multiprocessing.Pool(processes=min([5, multiprocessing.cpu_count()])) as pool:
+            chunk_size = 2500 # census batch limit is 10,000. Smaller batches tend to work better
+            data_split = zip(np.split(df_2, range(chunk_size, df_2.shape[0], chunk_size)), repeat(pub_dir))
+            it_2 = pd.concat(pool.starmap(geocode_using_census_batch, data_split))
+            del df_2
+            del data_split
+            
+        print(f'Done geocoding. {datetime.now()}')
+        # Concat and drop duplicates by keeping the last changes from US Batch Census Geocoder (overwrites the GeoSupport returns
+        concat = pd.concat([df, it, it_2], ignore_index = True).drop_duplicates(subset=['indexnumberid'], ignore_index = True, keep = 'last')[it.columns]
         del df
         del it
-
-        # TODO - check if pluto exists and matches the pluto version of the geosupport
+        del it_2
+        pd.DataFrame(concat).to_csv(output_csv, index=False)
+        del concat
 
     s3 = S3(**s3_args)
 
@@ -338,16 +368,23 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         else:
             db.execute_sql_file('create_pluto_table.sql')
             db.import_csv('pluto', pluto_file)
-            
 
+    # TODO: setup census tracts if it does not exist 
+            
 
     if mode == "2":
         # create views and grant access to folks
         db.execute_sql_file('create_addresses_views.sql')
 
         # download bbl view as csv and upload to s3
-        print("Creating oca_addresses_with_bbl and uploadng to S3")
         view = "oca_addresses_with_bbl"
+        print(f"Creating {view} and uploadng to S3")
+        csv_filepath = os.path.join(pub_dir, f"{view}.csv")
+        db.export_view_as_csv(view, csv_filepath)
+        s3.upload_file(f"{S3_PUBLIC_FOLDER}/{view}.csv", os.path.join(pub_dir, f"{view}.csv"))
+
+        view = "oca_addresses_with_ct"
+        print(f"Creating {view} and uploadng to S3")
         csv_filepath = os.path.join(pub_dir, f"{view}.csv")
         db.export_view_as_csv(view, csv_filepath)
         s3.upload_file(f"{S3_PUBLIC_FOLDER}/{view}.csv", os.path.join(pub_dir, f"{view}.csv"))

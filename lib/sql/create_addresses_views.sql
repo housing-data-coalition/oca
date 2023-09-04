@@ -30,27 +30,35 @@ create view oca_addresses_with_bbl as
 	left join 
 		pluto using(bbl);
 
-create view oca_addresses_with_ct as
-	select 
-		indexnumberid,
-		geoid,
-		-- namelsad,
-		countyfp,
-		city,
-		state,
-		postalcode,
-		grc,
-		grc2,
-		msg,
-		msg2
-	from oca_addresses o 
-	join tracts t 
-	on st_intersects(o.geom, t.geom);
+-- update oca_addresses with geom field
+ALTER TABLE oca_addresses 
+  ADD COLUMN geom Geometry(Point, 4326);
 
--- -- Re grant access
--- GRANT ALL ON ALL TABLES IN SCHEMA public TO jacob;
--- GRANT ALL ON ALL TABLES IN SCHEMA public TO  lucy;
--- GRANT ALL ON ALL TABLES IN SCHEMA public TO  maxwell;
+UPDATE oca_addresses 
+ SET geom = ST_SetSRID(ST_Point( lon, lat),4326);
+DROP INDEX IF EXISTS oca_addresses_geom_idx;
 
--- GRANT SELECT ON ALL TABLES IN SCHEMA public TO jweisberg;
--- GRANT SELECT ON ALL TABLES IN SCHEMA public TO select_only;
+CREATE INDEX oca_addresses_geom_idx
+  ON oca_addresses
+  USING GIST (geom);
+
+CREATE OR REPLACE VIEW public.oca_addresses_with_ct
+AS SELECT o.indexnumberid,
+    t.geoid,
+    t.countyfp,
+    o.city,
+    o.state,
+    o.postalcode,
+    o.grc,
+    o.grc2,
+    o.msg,
+    o.msg2
+   FROM oca_addresses o
+     JOIN tracts t ON st_intersects(o.geom, t.geom);
+
+-- Re grant access
+GRANT ALL ON ALL TABLES IN SCHEMA public TO jacob;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO lucy;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO maxwell;
+
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO select_only;

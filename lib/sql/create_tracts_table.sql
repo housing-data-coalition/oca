@@ -28,15 +28,3 @@ DROP INDEX IF EXISTS tracts_geom_idx;
 CREATE INDEX tracts_geom_idx
   ON tracts
   USING GIST (geom);
-
--- update oca_addresses
-ALTER TABLE oca_addresses 
-  ADD COLUMN geom Geometry(Point, 4326);
-
-UPDATE oca_addresses 
- SET geom = ST_SetSRID(ST_Point( lon, lat),4326)
-
-DROP INDEX IF EXISTS oca_addresses_geom_idx;
-CREATE INDEX oca_addresses_geom_idx
-  ON oca_addresses
-  USING GIST (geom);

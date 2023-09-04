@@ -1,5 +1,10 @@
+import os
+import pandas as pd
+from pandas.util import hash_pandas_object
+
 from geosupport import Geosupport,GeosupportError
 import usaddress
+import censusgeocode as cg
 
 from .placename_to_borocode import placename_to_borocode
 
@@ -17,12 +22,17 @@ def parse_address(addr):
     """
     try:
         tags, _ = usaddress.tag(addr)
+        # GRAND CONCOURSE fix? https://github.com/datamade/usaddress/issues/197
+        if 'grand concourse' in addr.lower():
+            tags, _ = usaddress.tag(addr + ', NY')
+
         house_number = ' '.join([v for k, v in tags.items() if k.startswith('AddressNumber')])
         street_name = ' '.join([v for k, v in tags.items() if k.startswith('StreetName')])
     except usaddress.RepeatedLabelError as e :
         tags = e.parsed_string
         house_number = ' '.join([x[0] for x in tags if x[1].startswith('AddressNumber')])
         street_name = ' '.join([x[0] for x in tags if x[1].startswith('StreetName')])
+
     return dict(
         house_number = house_number,
         street_name = street_name
@@ -96,3 +106,35 @@ def geocode_record(input, addr_cols):
         ret.update(addr_args)
         ret.update(parse_output(geo))
         return ret
+
+def geocode_using_census_batch(dataframe, pub_dir):
+
+    # save a copy of the current columns
+    cols = dataframe.columns
+    processing = dataframe.copy()
+
+    # create columns and a temp index to send off to censusgeocode
+    processing['addr1'] = processing['house_number'] + ' ' + processing['street_name']
+    processing['id'] = processing.index
+    processing['null'] = None
+
+    temp_file = os.path.join(pub_dir, f'temp_{hash_pandas_object(processing).values[0]}.csv')
+
+    try:
+        # unique id, street address, state, city, zip code
+        processing[['id','addr1','null','null','postalcode']].to_csv(temp_file, index = False, header= False)
+        done = pd.DataFrame(cg.addressbatch(str(temp_file), returntype='locations'))
+        done['id'] = done['id'].astype(int)
+
+        # delete file
+        os.remove(temp_file)
+
+        # overwrite some columns
+        done['status'] = done['match'].astype(str)
+        done['msg2'] = done['matchtype'].astype(str)
+
+        return done[['id','status','msg2','lat','lon']].merge(processing, on = 'id', suffixes=('','_x'))[cols]
+    except Exception as error:
+        print('Error with geocoding:', error)
+        processing['msg2'] = "Failed (un-logged error with batch geocoding)"
+        return processing[cols]
