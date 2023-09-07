@@ -319,7 +319,11 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     print('Uploading public files to S3:')
     for f in os.listdir(pub_dir):
         print('-', f)
-        s3.upload_file(f"{S3_PUBLIC_FOLDER}/{f}", os.path.join(pub_dir, f))
+        s3_filename = f
+        # to maintain consistent names for public level-1 csv files, we'll rename the level-2 version
+        if mode == "2" and f == "oca_addresses.csv":
+            s3_filename = "oca_addresses_private.csv"
+        s3.upload_file(f"{S3_PUBLIC_FOLDER}/{s3_filename}", os.path.join(pub_dir, f))
 
     # Upload raw data files and database dump to private folder in S3 bucket
     print('Uploading private files to S3:')
@@ -330,7 +334,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     # use s3 import to overwrite tables in the remote RDS
     if remote_db_args['db_url']:
         print('Importing csvs to the RDS:')
-        db = Database(**remote_db_args)
+        remote_db = Database(**remote_db_args)
         
         # reset tables from scratch
         remote_db.execute_sql_file('create_tables.sql')
@@ -338,10 +342,13 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         # import tables from s3
         for t in OCA_TABLES:
             print('-', f'{t} table to remote db')
+            s3_name = t
+            if mode == "2" and t == "oca_addresses":
+                s3_name = "oca_addresses_private"
             remote_db.sql(f"""
                 SELECT aws_s3.table_import_from_s3(
                 '{t}', '', '(FORMAT CSV, HEADER)',
-                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/{t}.csv', 'us-east-1'),
+                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/{s3_name}.csv', 'us-east-1'),
                 aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
             );
             """)
@@ -389,4 +396,10 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         db.export_view_as_csv(view, csv_filepath)
         s3.upload_file(f"{S3_PUBLIC_FOLDER}/{view}.csv", os.path.join(pub_dir, f"{view}.csv"))
 
-        # TODO - rename oca_address.csv to oca_address_private.csv, and create oca_address.csv without only census tract level data
+        # add level-1 version of address table from level-2 data and maintain consistent name
+        view = "oca_addresses_public"
+        s3_filename = "oca_addresses"
+        print(f"Creating {view} and uploadng to S3")
+        csv_filepath = os.path.join(pub_dir, f"{view}.csv")
+        db.export_view_as_csv(view, csv_filepath)
+        s3.upload_file(f"{S3_PUBLIC_FOLDER}/{s3_filename}.csv", os.path.join(pub_dir, f"{view}.csv"))

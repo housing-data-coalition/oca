@@ -56,6 +56,16 @@ AS SELECT o.indexnumberid,
    FROM oca_addresses o
      JOIN tracts t ON st_intersects(o.geom, t.geom);
 
+-- create a view equivalent to the level-1 version of "oca_addresses" table from
+-- the level-2 table, which can be made public (used for NYCDB) 
+CREATE OR REPLACE VIEW public.oca_addresses_public
+AS SELECT 
+	indexnumberid,
+    city,
+	state,
+	postalcode
+   FROM oca_addresses;
+
 -- Re grant access
 GRANT ALL ON ALL TABLES IN SCHEMA public TO jacob;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO lucy;
