@@ -22,19 +22,19 @@ This work is licensed under a [Creative Commons Attribution-NonCommercial-ShareA
 
 ## CSV Files
 
-[![Date Last Updated](https://oca-data.s3.amazonaws.com/public/last-updated-shield.png)](https://oca-data.s3.amazonaws.com/public/last-updated-date.txt)
+[![Date Last Updated](https://oca-2-dev.s3.amazonaws.com/public/last-updated-shield.png)](https://oca-2-dev.s3.amazonaws.com/public/last-updated-date.txt)
 
-* [`oca_index`](https://s3.amazonaws.com/oca-data/public/oca_index.csv)
-* [`oca_causes`](https://s3.amazonaws.com/oca-data/public/oca_causes.csv)
-* [`oca_addresses`](https://s3.amazonaws.com/oca-data/public/oca_addresses.csv)
-* [`oca_parties`](https://s3.amazonaws.com/oca-data/public/oca_parties.csv)
-* [`oca_events`](https://s3.amazonaws.com/oca-data/public/oca_events.csv)
-* [`oca_appearances`](https://s3.amazonaws.com/oca-data/public/oca_appearances.csv)
-* [`oca_appearance_outcomes`](https://s3.amazonaws.com/oca-data/public/oca_appearance_outcomes.csv)
-* [`oca_motions`](https://s3.amazonaws.com/oca-data/public/oca_motions.csv)
-* [`oca_decisions`](https://s3.amazonaws.com/oca-data/public/oca_decisions.csv)
-* [`oca_judgments`](https://s3.amazonaws.com/oca-data/public/oca_judgments.csv)
-* [`oca_warrants`](https://s3.amazonaws.com/oca-data/public/oca_warrants.csv)
+* [`oca_index`](https://oca-2-dev.s3.amazonaws.com/public/oca_index.csv)
+* [`oca_causes`](https://oca-2-dev.s3.amazonaws.com/public/oca_causes.csv)
+* [`oca_addresses`](https://oca-2-dev.s3.amazonaws.com/public/oca_addresses.csv)
+* [`oca_parties`](https://oca-2-dev.s3.amazonaws.com/public/oca_parties.csv)
+* [`oca_events`](https://oca-2-dev.s3.amazonaws.com/public/oca_events.csv)
+* [`oca_appearances`](https://oca-2-dev.s3.amazonaws.com/public/oca_appearances.csv)
+* [`oca_appearance_outcomes`](https://oca-2-dev.s3.amazonaws.com/public/oca_appearance_outcomes.csv)
+* [`oca_motions`](https://oca-2-dev.s3.amazonaws.com/public/oca_motions.csv)
+* [`oca_decisions`](https://oca-2-dev.s3.amazonaws.com/public/oca_decisions.csv)
+* [`oca_judgments`](https://oca-2-dev.s3.amazonaws.com/public/oca_judgments.csv)
+* [`oca_warrants`](https://oca-2-dev.s3.amazonaws.com/public/oca_warrants.csv)
 
 
 ## About the data
