@@ -1,8 +1,9 @@
-drop view if exists oca_addresses_with_bbl cascade;
-drop view if exists oca_addresses_with_ct cascade;
+DROP view IF EXISTS oca_addresses_with_bbl cascade;
+DROP view IF EXISTS oca_addresses_with_ct cascade;
+DROP view IF EXISTS oca_addresses_public cascade;
 
-create view oca_addresses_with_bbl as
-	select 
+CREATE view oca_addresses_with_bbl AS
+	SELECT 
 		indexnumberid,
 		city,
 		state,
@@ -22,13 +23,13 @@ create view oca_addresses_with_bbl as
 		msg,
 		msg2,
 		unitsres,
-		case 
-			when unitsres > 10 then o.bbl
-			else null
-		end as bbl
-	from oca_addresses o
-	left join 
-		pluto using(bbl);
+		CASE 
+			WHEN unitsres > 10 THEN o.bbl
+			ELSE NULL
+		END AS bbl
+	FROM oca_addresses o
+	LEFT JOIN 
+		pluto USING(bbl);
 
 -- update oca_addresses with geom field
 ALTER TABLE oca_addresses 
@@ -48,11 +49,7 @@ AS SELECT o.indexnumberid,
     t.countyfp,
     o.city,
     o.state,
-    o.postalcode,
-    o.grc,
-    o.grc2,
-    o.msg,
-    o.msg2
+    o.postalcode
    FROM oca_addresses o
      JOIN tracts t ON st_intersects(o.geom, t.geom);
 
