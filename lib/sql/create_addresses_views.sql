@@ -1,8 +1,4 @@
-DROP view IF EXISTS oca_addresses_with_bbl cascade;
-DROP view IF EXISTS oca_addresses_with_ct cascade;
-DROP view IF EXISTS oca_addresses_public cascade;
-
-CREATE view oca_addresses_with_bbl AS
+CREATE OR REPLACE oca_addresses_with_bbl AS
 	SELECT 
 		indexnumberid,
 		city,
@@ -51,7 +47,7 @@ AS SELECT o.indexnumberid,
     o.state,
     o.postalcode
    FROM oca_addresses o
-     JOIN tracts t ON st_intersects(o.geom, t.geom);
+   LEFT JOIN tracts t ON st_intersects(o.geom, t.geom);
 
 -- create a view equivalent to the level-1 version of "oca_addresses" table from
 -- the level-2 table, which can be made public (used for NYCDB) 
