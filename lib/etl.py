@@ -375,6 +375,8 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         else:
             db.execute_sql_file('create_pluto_table.sql')
             db.import_csv('pluto', pluto_file)
+            
+        db.execute_sql_file('alter_pluto_table.sql')
 
     # TODO: setup census tracts if it does not exist 
             

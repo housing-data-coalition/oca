@@ -164,6 +164,7 @@ CREATE TABLE IF NOT EXISTS oca_warrants (
 
 CREATE INDEX ON oca_causes (indexnumberid);
 CREATE INDEX ON oca_addresses (indexnumberid);
+CREATE INDEX ON oca_addresses (bbl);
 CREATE INDEX ON oca_parties (indexnumberid);
 CREATE INDEX ON oca_events (indexnumberid);
 CREATE INDEX ON oca_appearances (indexnumberid);
