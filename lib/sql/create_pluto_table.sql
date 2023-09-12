@@ -96,4 +96,3 @@ CREATE TABLE pluto (
 
 drop view if exists oca_addresses_with_bbl cascade;
 drop view if exists oca_addresses_with_ct cascade;
-alter table pluto alter column bbl TYPE TEXT USING (round(bbl::numeric,0));

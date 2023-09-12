@@ -1,4 +1,4 @@
-CREATE OR REPLACE oca_addresses_with_bbl AS
+CREATE OR REPLACE VIEW public.oca_addresses_with_bbl AS
 	SELECT 
 		indexnumberid,
 		city,
