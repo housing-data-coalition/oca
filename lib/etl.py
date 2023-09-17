@@ -382,6 +382,12 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
             
 
     if mode == "2":
+        if remote_db_args['db_url']:
+            db = Database(**remote_db_args)
+        else:
+            # Todo: Check if local database as postgis setup (also change the docker image to postgis)
+            quit()
+            
         # create views and grant access to folks
         db.execute_sql_file('create_addresses_views.sql')
 

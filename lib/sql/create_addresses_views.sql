@@ -1,3 +1,6 @@
+-- CREATE EXTENSION IF NOT EXISTS postgis;
+-- CREATE EXTENSION IF NOT EXISTS aws_s3 CASCADE;
+
 CREATE OR REPLACE VIEW public.oca_addresses_with_bbl AS
 	SELECT 
 		indexnumberid,
