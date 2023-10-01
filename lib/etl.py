@@ -300,7 +300,11 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
             
         print(f'Done geocoding. {datetime.now()}')
         # Concat and drop duplicates by keeping the last changes from US Batch Census Geocoder (overwrites the GeoSupport returns
-        concat = pd.concat([df, it, it_2], ignore_index = True).drop_duplicates(subset=['indexnumberid'], ignore_index = True, keep = 'last')[it.columns]
+        export_cols = ['indexnumberid', 'street1', 'street2', 'city', 'state',
+            'postalcode', 'status', 'house_number', 'street_name', 'borough_code',
+            'place_name', 'sname', 'hnum', 'boro', 'lat', 'lng', 'bin', 'bbl', 'cd',
+            'ct', 'council', 'grc', 'grc2', 'msg', 'msg2', 'lon', 'zip_code']
+        concat = pd.concat([df, it, it_2], ignore_index = True).drop_duplicates(subset=['indexnumberid'], ignore_index = True, keep = 'last')[export_cols]
         del df
         del it
         del it_2
