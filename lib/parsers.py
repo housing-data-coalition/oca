@@ -157,6 +157,8 @@ def parse_addresses(case, db):
 
         rows.append({
             'indexnumberid' : IndexNumberId,
+            'street1' : oca_extract(address, 'Street1'),
+            'street2' : oca_extract(address, 'Street2'),
             'city' : oca_extract(address, 'City'),
             'state' : oca_extract(address, 'State'),
             'postalcode' : oca_extract(address, 'PostalCode'),
