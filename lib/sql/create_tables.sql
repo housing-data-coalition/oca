@@ -165,7 +165,7 @@ DROP TABLE IF EXISTS oca_metadata CASCADE;
 CREATE TABLE IF NOT EXISTS oca_metadata (
   -- we don't want to delete records here when deleted from others
 	indexnumberid text PRIMARY KEY,
-  extractdate date,
+  initialdate date,
   updatedate date,
   deletedate date
 );

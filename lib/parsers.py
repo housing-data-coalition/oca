@@ -444,18 +444,18 @@ def update_metadata(case, db, extract_date):
 
     row = {
         'indexnumberid' : IndexNumberId,
-        'extractdate': extract_date,
+        'initialdate': extract_date,
         'updatedate': extract_date if not is_case_to_delete(case) else None,
         'deletedate': extract_date if is_case_to_delete(case) else None,
     }
     sql = """
-    INSERT INTO oca_metadata AS m (indexnumberid, extractdate, updatedate, deletedate)
+    INSERT INTO oca_metadata AS m (indexnumberid, initialdate, updatedate, deletedate)
         VALUES (%s, %s, %s, %s)
     ON CONFLICT (indexnumberid)
     DO UPDATE SET
         (updatedate, deletedate) = (COALESCE(EXCLUDED.updatedate, m.updatedate), EXCLUDED.deletedate)
     """
-    params = (row['indexnumberid'], row['extractdate'], row['updatedate'], row['deletedate'])
+    params = (row['indexnumberid'], row['initialdate'], row['updatedate'], row['deletedate'])
 
     with db.conn.cursor() as curs:
         curs.execute(sql, params)
