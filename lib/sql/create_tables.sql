@@ -161,6 +161,15 @@ CREATE TABLE IF NOT EXISTS oca_warrants (
   executiondate date
 );
 
+DROP TABLE IF EXISTS oca_metadata CASCADE;
+CREATE TABLE IF NOT EXISTS oca_metadata (
+  -- we don't want to delete records here when deleted from others
+	indexnumberid text PRIMARY KEY,
+  extractdate date,
+  updatedate date,
+  deletedate date
+);
+
 
 CREATE INDEX ON oca_causes (indexnumberid);
 CREATE INDEX ON oca_addresses (indexnumberid);
@@ -173,3 +182,4 @@ CREATE INDEX ON oca_motions (indexnumberid);
 CREATE INDEX ON oca_decisions (indexnumberid);
 CREATE INDEX ON oca_judgments (indexnumberid);
 CREATE INDEX ON oca_warrants (indexnumberid);
+CREATE INDEX ON oca_metadata (indexnumberid);

@@ -13,12 +13,13 @@ import pandas as pd
 import multiprocessing
 import functools
 from itertools import repeat
+from lxml import etree
 import sys
 
 from .database import Database
 from .s3 import S3
 from .sftp import Sftp
-from .parsers import parse_file
+from .parsers import oca_tag, parse_file
 
 
 OCA_TABLES = [
@@ -32,7 +33,8 @@ OCA_TABLES = [
     'oca_motions',
     'oca_decisions',
     'oca_judgments',
-    'oca_warrants'
+    'oca_warrants',
+    'oca_metadata'
 ]
 
 DATA_ZIPFILE_PAT = r'LandlordTenant\.(Initial\.FiledIn\d{4}|Incr)\.\d{4}-\d{2}-\d{2}\.zip'
@@ -231,7 +233,11 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
 
         print('  - Parsing XML file...')
         with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
-            parse_file(xml_file, db)
+            for action, elem in etree.iterparse(xml_file, tag=oca_tag('RunDate')):
+                extract_date = elem.text
+
+        with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
+            parse_file(xml_file, db, extract_date)
 
         print('\n   - Updating appearance outcomes...')
         db.execute_sql_file('update_appearance_outcomes.sql')
