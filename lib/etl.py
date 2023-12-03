@@ -13,12 +13,13 @@ import pandas as pd
 import multiprocessing
 import functools
 from itertools import repeat
+from lxml import etree
 import sys
 
 from .database import Database
 from .s3 import S3
 from .sftp import Sftp
-from .parsers import parse_file
+from .parsers import oca_tag, parse_file
 
 
 OCA_TABLES = [
@@ -32,7 +33,8 @@ OCA_TABLES = [
     'oca_motions',
     'oca_decisions',
     'oca_judgments',
-    'oca_warrants'
+    'oca_warrants',
+    'oca_metadata'
 ]
 
 DATA_ZIPFILE_PAT = r'LandlordTenant\.(Initial\.FiledIn\d{4}|Incr)\.\d{4}-\d{2}-\d{2}\.zip'
@@ -113,6 +115,8 @@ def insert_staging_to_main(db):
 
     db.sql(f"DELETE FROM oca_index WHERE indexnumberid IN (SELECT indexnumberid FROM oca_index_staging)")
     for table in OCA_TABLES:
+        if table in ('oca_metadata'): # skip these tables
+            continue 
         db.sql(f"INSERT INTO {table} SELECT * FROM {table}_staging")
         db.sql(f"DROP TABLE {table}_staging")
 
@@ -161,6 +165,24 @@ def download_pluto(output_dir):
 
     return pluto_file
 
+
+def upload_public_file(f, pub_dir, mode, s3_args):
+    """
+    Uploads a local file from the pub_dir folder to the S3_PUBLIC_FOLDER.
+
+    :param f: filename
+    :paramp ub_dir: local path folder
+    :param mode: string
+    :param s3_args: dict/ kwargs with aws_id, aws_key aws_bucket_name
+    """
+    s3 = S3(**s3_args)
+    print('-', f)
+    s3_filename = f
+    # to maintain consistent names for public level-1 csv files, we'll rename the level-2 version
+    if mode == "2" and f == "oca_addresses.csv":
+        s3_filename = "oca_addresses_private.csv"
+    s3.upload_file(f"{S3_PUBLIC_FOLDER}/{s3_filename}", os.path.join(pub_dir, f))
+    del s3
 
 def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     """ 
@@ -231,7 +253,11 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
 
         print('  - Parsing XML file...')
         with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
-            parse_file(xml_file, db)
+            for action, elem in etree.iterparse(xml_file, tag=oca_tag('RunDate')):
+                extract_date = elem.text
+
+        with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
+            parse_file(xml_file, db, extract_date)
 
         print('\n   - Updating appearance outcomes...')
         db.execute_sql_file('update_appearance_outcomes.sql')
@@ -268,7 +294,10 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         )
 
         #filter for only records that need to be geocoded
-        df_1 = df[(((pd.isna(df['lat'])) | (df['lat'] == '')) & (df['house_number'] != ''))].copy().reset_index()
+        df_1 = df[
+                ((pd.isna(df['lat'])) | (df['lat'] == '')) & 
+                ((df['house_number'] != '') | (pd.notna(df['house_number'])))
+            ].copy().reset_index()
         print(f'Geocoding {len(df_1)} entries in {output_csv}.')
 
         records = df_1.to_dict('records')
@@ -302,7 +331,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         # Concat and drop duplicates by keeping the last changes from US Batch Census Geocoder (overwrites the GeoSupport returns
         export_cols = ['indexnumberid', 'street1', 'street2', 'city', 'state',
             'postalcode', 'status', 'house_number', 'street_name', 'borough_code',
-            'place_name', 'sname', 'hnum', 'boro', 'lat', 'lng', 'bin', 'bbl', 'cd',
+            'place_name', 'sname', 'hnum', 'boro', 'lat', 'bin', 'bbl', 'cd',
             'ct', 'council', 'grc', 'grc2', 'msg', 'msg2', 'lon', 'zip_code']
         concat = pd.concat([df, it, it_2], ignore_index = True).drop_duplicates(subset=['indexnumberid'], ignore_index = True, keep = 'last')[export_cols]
         del df
@@ -316,18 +345,12 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     # Update "last updated date" files on S3 for the latest file processed
     create_date_files(s3, new_sftp_zip_files[-1], pub_dir)
 
-    # TODO: upload in parallel
-    # http://ls.pwd.io/2013/06/parallel-s3-uploads-using-boto-and-threads-in-python/
-    
-    # Upload csv files to public folder in S3 bucket
     print('Uploading public files to S3:')
-    for f in os.listdir(pub_dir):
-        print('-', f)
-        s3_filename = f
-        # to maintain consistent names for public level-1 csv files, we'll rename the level-2 version
-        if mode == "2" and f == "oca_addresses.csv":
-            s3_filename = "oca_addresses_private.csv"
-        s3.upload_file(f"{S3_PUBLIC_FOLDER}/{s3_filename}", os.path.join(pub_dir, f))
+    public_files = os.listdir(pub_dir)
+    with multiprocessing.Pool(processes=min((6, multiprocessing.cpu_count()))) as pool:
+        # work around for scope issue - Can't pickle local object ... could be reworked to avoid using starmap/zip
+        files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args)) 
+        pool.starmap(upload_public_file, files_zip) 
 
     # Upload raw data files and database dump to private folder in S3 bucket
     print('Uploading private files to S3:')
@@ -357,30 +380,30 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
             );
             """)
 
-    # setup pluto if it does not exist
-    if not db.sql_fetch_one(
-        "SELECT * FROM information_schema.tables WHERE table_name = 'pluto'"):
-        pluto_file = download_pluto(pub_dir)
-        
-        if remote_db_args['db_url']:     
-                print('uploading pluto to s3')
-                s3.upload_file(f"{S3_PUBLIC_FOLDER}/pluto.csv", pluto_file)
-
-                print('importing pluto to db')
-                db.execute_sql_file('create_pluto_table.sql')
-                
-                db.sql(f"""
-                    SELECT aws_s3.table_import_from_s3(
-                    'pluto', '', '(FORMAT CSV, HEADER)',
-                    aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/pluto.csv', 'us-east-1'),
-                    aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
-                );
-                """)
-        else:
-            db.execute_sql_file('create_pluto_table.sql')
-            db.import_csv('pluto', pluto_file)
+        # setup pluto if it does not exist
+        if not db.sql_fetch_one(
+            "SELECT * FROM information_schema.tables WHERE table_name = 'pluto'"):
+            pluto_file = download_pluto(pub_dir)
             
-        db.execute_sql_file('alter_pluto_table.sql')
+            if remote_db_args['db_url']:     
+                    print('uploading pluto to s3')
+                    s3.upload_file(f"{S3_PUBLIC_FOLDER}/pluto.csv", pluto_file)
+
+                    print('importing pluto to db')
+                    db.execute_sql_file('create_pluto_table.sql')
+                    
+                    db.sql(f"""
+                        SELECT aws_s3.table_import_from_s3(
+                        'pluto', '', '(FORMAT CSV, HEADER)',
+                        aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/pluto.csv', 'us-east-1'),
+                        aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
+                    );
+                    """)
+            else:
+                db.execute_sql_file('create_pluto_table.sql')
+                db.import_csv('pluto', pluto_file)
+                
+            db.execute_sql_file('alter_pluto_table.sql')
 
     # TODO: setup census tracts if it does not exist 
             

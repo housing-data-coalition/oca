@@ -432,14 +432,46 @@ def parse_warrants(case, db):
             db.insert_rows(rows, 'oca_warrants_staging')
 
 
-def parse_case(case, db):
+def update_metadata(case, db, extract_date):
+    """ for a case update the metadata table with dates
+
+    :param case: an lxml.etree element for a case index
+    :param db: a Database object
+    :param extract_date: date of the XML data extract from OCA
+    """
+
+    IndexNumberId = case.find(oca_tag('IndexNumberId')).text
+
+    row = {
+        'indexnumberid' : IndexNumberId,
+        'initialdate': extract_date,
+        'updatedate': extract_date if not is_case_to_delete(case) else None,
+        'deletedate': extract_date if is_case_to_delete(case) else None,
+    }
+    sql = """
+    INSERT INTO oca_metadata AS m (indexnumberid, initialdate, updatedate, deletedate)
+        VALUES (%s, %s, %s, %s)
+    ON CONFLICT (indexnumberid)
+    DO UPDATE SET
+        (updatedate, deletedate) = (COALESCE(EXCLUDED.updatedate, m.updatedate), EXCLUDED.deletedate)
+    """
+    params = (row['indexnumberid'], row['initialdate'], row['updatedate'], row['deletedate'])
+
+    with db.conn.cursor() as curs:
+        curs.execute(sql, params)
+        db.conn.commit()
+
+
+def parse_case(case, db, extract_date):
     """ for a case, remove it from the database if it already exists, 
-    then determine if it needs to be deleted permantly, if not then 
+    then determine if it needs to be deleted permanently, if not then 
     parse all the values and insert the values into all the database table
 
     :param case: an lxml.etree element for a case index
     :param db: a Database object
     """
+
+    update_metadata(case, db, extract_date)
 
     # If this case is flagged for removal, skip the parsing steps
     if is_case_to_delete(case):
@@ -459,7 +491,7 @@ def parse_case(case, db):
     parse_warrants(case, db)
 
 
-def parse_file(xml_file, db):
+def parse_file(xml_file, db, extract_date):
 
     context = etree.iterparse(xml_file, tag=oca_tag('Index'))
 
@@ -468,7 +500,7 @@ def parse_file(xml_file, db):
         # If case already exists in DB delete it, 
         # if we have delete instructions don't re-add it, 
         # otherwise parse the case and insert it into the various tables.
-        parse_case(case, db)
+        parse_case(case, db, extract_date)
 
         # Clear the case element to free memory
         case.clear()
