@@ -42,7 +42,6 @@ CREATE TABLE IF NOT EXISTS oca_addresses (
   hnum text,
   boro text,
   lat real,
-  lng real,
   bin text,
   bbl text,
   cd text,
