@@ -166,6 +166,24 @@ def download_pluto(output_dir):
     return pluto_file
 
 
+def upload_public_file(f, pub_dir, mode, s3_args):
+    """
+    Uploads a local file from the pub_dir folder to the S3_PUBLIC_FOLDER.
+
+    :param f: filename
+    :paramp ub_dir: local path folder
+    :param mode: string
+    :param s3_args: dict/ kwargs with aws_id, aws_key aws_bucket_name
+    """
+    s3 = S3(**s3_args)
+    print('-', f)
+    s3_filename = f
+    # to maintain consistent names for public level-1 csv files, we'll rename the level-2 version
+    if mode == "2" and f == "oca_addresses.csv":
+        s3_filename = "oca_addresses_private.csv"
+    s3.upload_file(f"{S3_PUBLIC_FOLDER}/{s3_filename}", os.path.join(pub_dir, f))
+    del s3
+
 def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     """ 
     Extract files from SFTP, parse cases, upload to S3 bucket
@@ -327,18 +345,12 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     # Update "last updated date" files on S3 for the latest file processed
     create_date_files(s3, new_sftp_zip_files[-1], pub_dir)
 
-    # TODO: upload in parallel
-    # http://ls.pwd.io/2013/06/parallel-s3-uploads-using-boto-and-threads-in-python/
-    
-    # Upload csv files to public folder in S3 bucket
     print('Uploading public files to S3:')
-    for f in os.listdir(pub_dir):
-        print('-', f)
-        s3_filename = f
-        # to maintain consistent names for public level-1 csv files, we'll rename the level-2 version
-        if mode == "2" and f == "oca_addresses.csv":
-            s3_filename = "oca_addresses_private.csv"
-        s3.upload_file(f"{S3_PUBLIC_FOLDER}/{s3_filename}", os.path.join(pub_dir, f))
+    public_files = os.listdir(pub_dir)
+    with multiprocessing.Pool(processes=min((6, multiprocessing.cpu_count()))) as pool:
+        # work around for scope issue - Can't pickle local object ... could be reworked to avoid using starmap/zip
+        files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args)) 
+        pool.starmap(upload_public_file, files_zip) 
 
     # Upload raw data files and database dump to private folder in S3 bucket
     print('Uploading private files to S3:')
