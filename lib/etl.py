@@ -115,6 +115,8 @@ def insert_staging_to_main(db):
 
     db.sql(f"DELETE FROM oca_index WHERE indexnumberid IN (SELECT indexnumberid FROM oca_index_staging)")
     for table in OCA_TABLES:
+        if table in ('oca_metadata'): # skip these tables
+            continue 
         db.sql(f"INSERT INTO {table} SELECT * FROM {table}_staging")
         db.sql(f"DROP TABLE {table}_staging")
 
@@ -274,7 +276,10 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         )
 
         #filter for only records that need to be geocoded
-        df_1 = df[(((pd.isna(df['lat'])) | (df['lat'] == '')) & (df['house_number'] != ''))].copy().reset_index()
+        df_1 = df[
+                ((pd.isna(df['lat'])) | (df['lat'] == '')) & 
+                ((df['house_number'] != '') | (pd.notna(df['house_number'])))
+            ].copy().reset_index()
         print(f'Geocoding {len(df_1)} entries in {output_csv}.')
 
         records = df_1.to_dict('records')
@@ -308,7 +313,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         # Concat and drop duplicates by keeping the last changes from US Batch Census Geocoder (overwrites the GeoSupport returns
         export_cols = ['indexnumberid', 'street1', 'street2', 'city', 'state',
             'postalcode', 'status', 'house_number', 'street_name', 'borough_code',
-            'place_name', 'sname', 'hnum', 'boro', 'lat', 'lng', 'bin', 'bbl', 'cd',
+            'place_name', 'sname', 'hnum', 'boro', 'lat', 'bin', 'bbl', 'cd',
             'ct', 'council', 'grc', 'grc2', 'msg', 'msg2', 'lon', 'zip_code']
         concat = pd.concat([df, it, it_2], ignore_index = True).drop_duplicates(subset=['indexnumberid'], ignore_index = True, keep = 'last')[export_cols]
         del df
@@ -363,30 +368,30 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
             );
             """)
 
-    # setup pluto if it does not exist
-    if not db.sql_fetch_one(
-        "SELECT * FROM information_schema.tables WHERE table_name = 'pluto'"):
-        pluto_file = download_pluto(pub_dir)
-        
-        if remote_db_args['db_url']:     
-                print('uploading pluto to s3')
-                s3.upload_file(f"{S3_PUBLIC_FOLDER}/pluto.csv", pluto_file)
-
-                print('importing pluto to db')
-                db.execute_sql_file('create_pluto_table.sql')
-                
-                db.sql(f"""
-                    SELECT aws_s3.table_import_from_s3(
-                    'pluto', '', '(FORMAT CSV, HEADER)',
-                    aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/pluto.csv', 'us-east-1'),
-                    aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
-                );
-                """)
-        else:
-            db.execute_sql_file('create_pluto_table.sql')
-            db.import_csv('pluto', pluto_file)
+        # setup pluto if it does not exist
+        if not db.sql_fetch_one(
+            "SELECT * FROM information_schema.tables WHERE table_name = 'pluto'"):
+            pluto_file = download_pluto(pub_dir)
             
-        db.execute_sql_file('alter_pluto_table.sql')
+            if remote_db_args['db_url']:     
+                    print('uploading pluto to s3')
+                    s3.upload_file(f"{S3_PUBLIC_FOLDER}/pluto.csv", pluto_file)
+
+                    print('importing pluto to db')
+                    db.execute_sql_file('create_pluto_table.sql')
+                    
+                    db.sql(f"""
+                        SELECT aws_s3.table_import_from_s3(
+                        'pluto', '', '(FORMAT CSV, HEADER)',
+                        aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/pluto.csv', 'us-east-1'),
+                        aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
+                    );
+                    """)
+            else:
+                db.execute_sql_file('create_pluto_table.sql')
+                db.import_csv('pluto', pluto_file)
+                
+            db.execute_sql_file('alter_pluto_table.sql')
 
     # TODO: setup census tracts if it does not exist 
             
