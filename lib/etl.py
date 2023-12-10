@@ -265,8 +265,13 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
 
         print('  - Parsing XML file...')
         with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
-            for action, elem in etree.iterparse(xml_file, tag=oca_tag('RunDate')):
-                extract_date = elem.text
+            for _, elem in etree.iterparse(xml_file, tag=oca_tag('RunDate')):
+                # Grab the first date and break. 
+                # todo - find the RunDate using regex? or something that does not use that much memory
+                # https://stackoverflow.com/questions/7697710/python-running-out-of-memory-parsing-xml-using-celementtree-iterparse
+                if extract_date:
+                    extract_date = elem.text
+                    break
 
         with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
             parse_file(xml_file, db, extract_date)
