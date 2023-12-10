@@ -7,6 +7,9 @@ class Sftp:
 	"""SFTP client for getting files from OCA"""
 
 	def __init__(self, host, user, pswd, dir):
+		# Authorize SSH Host for SFTP connection
+		os.system("ssh-keyscan -t dsa {host} >> ~/.ssh/known_hosts")
+
 		self.sftp = pysftp.Connection(host=host, username=user, password=pswd)
 		self.dir = dir
 

@@ -5,9 +5,6 @@ services:
     build: 
       context: .
       dockerfile: Dockerfile
-      args: 
-        SFTP_HOST: ${SFTP_HOST}
-        MODE: ${MODE}
     user: 'root'
     volumes:
       - .:/app
