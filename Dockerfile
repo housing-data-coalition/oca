@@ -17,7 +17,7 @@ RUN apt-get install -y \
   rm -rf /var/lib/apt/lists/*
 
 # Check the latest version here https://www.nyc.gov/site/planning/data-maps/open-data/dwn-gdelx.page
-ENV RELEASE=23c
+ENV RELEASE=23d
 ENV MAJOR=23
 ENV MINOR=3
 ENV PATCH=0

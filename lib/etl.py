@@ -160,8 +160,8 @@ def download_pluto(output_dir):
     """
     print('downloading pluto')
 
-    #check https://www.nyc.gov/site/planning/data-maps/open-data/dwn-pluto-mappluto.page for updates
-    PLUTO_CSV_URL = 'https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/nyc_pluto_23v2_csv.zip'
+    # Check https://www.nyc.gov/site/planning/data-maps/open-data/dwn-pluto-mappluto.page for updates
+    PLUTO_CSV_URL = 'https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/nyc_pluto_23v3_csv.zip'
 
     #download and unzip
     response = requests.get(PLUTO_CSV_URL)
