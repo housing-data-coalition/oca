@@ -110,13 +110,25 @@ def insert_staging_to_main(db):
     Delete all cases from main tables if they exist in the staging table, 
     then insert all records from the staging tables to the main tables
 
+    bug: DISABLE TRIGGER ALL to a work around to avoid DELETE FROM command stalling. 
+        A VACUUM FULL on all the tables were tried, it does not seem to helpl
+        Might be a database setting.
+
     :param db: Database object
     """
 
-    db.sql(f"DELETE FROM oca_index WHERE indexnumberid IN (SELECT indexnumberid FROM oca_index_staging)")
+    db.sql("ALTER TABLE oca_index DISABLE TRIGGER ALL")
     for table in OCA_TABLES:
         if table in ('oca_metadata'): # skip these tables
-            continue 
+            continue
+        print(f"\t...Deleting older entries from {table}")
+        db.sql(f"DELETE FROM {table} WHERE indexnumberid IN (SELECT indexnumberid FROM oca_index_staging)")
+    db.sql("ALTER TABLE oca_index ENABLE TRIGGER ALL")
+
+    for table in OCA_TABLES:
+        if table in ('oca_metadata'): # skip these tables
+            continue
+        print(f"\t...Inserting to {table}")
         db.sql(f"INSERT INTO {table} SELECT * FROM {table}_staging")
         db.sql(f"DROP TABLE {table}_staging")
 
