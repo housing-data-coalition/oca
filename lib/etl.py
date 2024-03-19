@@ -110,13 +110,25 @@ def insert_staging_to_main(db):
     Delete all cases from main tables if they exist in the staging table, 
     then insert all records from the staging tables to the main tables
 
+    bug: DISABLE TRIGGER ALL to a work around to avoid DELETE FROM command stalling. 
+        A VACUUM FULL on all the tables were tried, it does not seem to helpl
+        Might be a database setting.
+
     :param db: Database object
     """
 
-    db.sql(f"DELETE FROM oca_index WHERE indexnumberid IN (SELECT indexnumberid FROM oca_index_staging)")
+    db.sql("ALTER TABLE oca_index DISABLE TRIGGER ALL")
     for table in OCA_TABLES:
         if table in ('oca_metadata'): # skip these tables
-            continue 
+            continue
+        print(f"\t...Deleting older entries from {table}")
+        db.sql(f"DELETE FROM {table} WHERE indexnumberid IN (SELECT indexnumberid FROM oca_index_staging)")
+    db.sql("ALTER TABLE oca_index ENABLE TRIGGER ALL")
+
+    for table in OCA_TABLES:
+        if table in ('oca_metadata'): # skip these tables
+            continue
+        print(f"\t...Inserting to {table}")
         db.sql(f"INSERT INTO {table} SELECT * FROM {table}_staging")
         db.sql(f"DROP TABLE {table}_staging")
 
@@ -148,8 +160,8 @@ def download_pluto(output_dir):
     """
     print('downloading pluto')
 
-    #check https://www.nyc.gov/site/planning/data-maps/open-data/dwn-pluto-mappluto.page for updates
-    PLUTO_CSV_URL = 'https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/nyc_pluto_23v2_csv.zip'
+    # Check https://www.nyc.gov/site/planning/data-maps/open-data/dwn-pluto-mappluto.page for updates
+    PLUTO_CSV_URL = 'https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/nyc_pluto_23v3_csv.zip'
 
     #download and unzip
     response = requests.get(PLUTO_CSV_URL)
@@ -252,9 +264,15 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         db.execute_sql_file('create_tables_staging.sql')
 
         print('  - Parsing XML file...')
+        extract_date = None
         with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
-            for action, elem in etree.iterparse(xml_file, tag=oca_tag('RunDate')):
-                extract_date = elem.text
+            for _, elem in etree.iterparse(xml_file, tag=oca_tag('RunDate')):
+                # Grab the first date and break. 
+                # todo - find the RunDate using regex? or something that does not use that much memory
+                # https://stackoverflow.com/questions/7697710/python-running-out-of-memory-parsing-xml-using-celementtree-iterparse
+                if not extract_date:
+                    extract_date = elem.text
+                    break
 
         with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
             parse_file(xml_file, db, extract_date)

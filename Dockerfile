@@ -16,36 +16,25 @@ RUN apt-get install -y \
     postgresql-client && \
   rm -rf /var/lib/apt/lists/*
 
-# Setup geosupport, if MODE=2
-ARG MODE
-
-# check the latest version here https://www.nyc.gov/site/planning/data-maps/open-data/dwn-gdelx.page
-ENV RELEASE=23c
+# Check the latest version here https://www.nyc.gov/site/planning/data-maps/open-data/dwn-gdelx.page
+ENV RELEASE=23d
 ENV MAJOR=23
 ENV MINOR=3
 ENV PATCH=0
 WORKDIR /geosupport
 
-RUN echo $MODE
-RUN if [ "$MODE" = "2" ]; then \
-    pip install python-geosupport; \
+RUN  pip install python-geosupport; \
     FILE_NAME=linux_geo${RELEASE}_${MAJOR}_${MINOR}.zip; \
     echo ${FILE_NAME}; \
     curl -O https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/$FILE_NAME; \
     unzip *.zip; \
-    rm *.zip; \ 
-else \
-    echo "MODE is set to 1 - skipping geosupport install"; \
-fi
+    rm *.zip; 
 
 ENV GEOFILES=/geosupport/version-${RELEASE}_${MAJOR}.${MINOR}/fls/
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/geosupport/version-${RELEASE}_${MAJOR}.${MINOR}/lib/
 
-# Authorize SSH Host for SFTP connection
-ARG SFTP_HOST
-RUN mkdir -p ~/.ssh && \
-    chmod 0700 ~/.ssh && \
-    ssh-keyscan -t dsa ${SFTP_HOST} >> ~/.ssh/known_hosts
+# Create ssh folder
+RUN mkdir -p ~/.ssh && chmod 0700 ~/.ssh 
 
 COPY . /app
 

@@ -31,15 +31,25 @@ def insert_many(table_name, rows):
 class Database:
     """Database connection to OCA database"""
 
-    def __init__(self, db_url):
+    def __init__(self, db_url, autocommit = False):
         self.db_url = db_url
         self.conn = psycopg2.connect(db_url) 
 
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.conn.close()
 
-    def sql(self, SQL):
-        """ executes single sql statement """
+    def sql(self, SQL, autocommit = False):
+        """ Executes single sql statement 
+
+        Set auto commit to run queries like VACUUM FULL [1]
+        [1]: https://til.codeinthehole.com/posts/about-a-gotcha-with-psycopg2s-autocommit-handling/
+        """
+        if autocommit: self.conn.set_session(autocommit=True)
+        
         with self.conn.cursor() as curs:
             curs.execute(SQL)
+
+        if autocommit: self.conn.set_session(autocommit=False) # unset
         self.conn.commit()
 
     def sql_fetch_one(self, SQL):
