@@ -276,7 +276,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         print('  - Inserting from staging to main...')
         insert_staging_to_main(db)
 
-    # Export the aws db tables to csv files directly into the s3 bucket
+    # Export the rds tables to csv files directly into the s3 bucket
     for t in OCA_TABLES:
         print('-', f'{t} table from db to s3')
         # to maintain consistent names for public level-1 csv files, we'll rename the level-2 version
@@ -290,13 +290,12 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
                     options :='FORMAT CSV, HEADER');
                 """)
 
-    # Export oca_addresses to local
-    csv_filepath = os.path.join(pub_dir, f"oca_addresses.csv")
+    # Export oca_addresses_private.csv to pub_dir to geocode
+    csv_filepath = os.path.join(pub_dir, f"oca_addresses_private.csv")
     db.export_csv('oca_addresses', csv_filepath)
 
-    # Geocode records 
-    input_csv = Path(pub_dir) / 'oca_addresses.csv'
-    output_csv = Path(pub_dir) /'oca_addresses.csv'
+    input_csv = Path(pub_dir) / 'oca_addresses_private.csv'
+    output_csv = Path(pub_dir) /'oca_addresses_private.csv'
     addr_cols = ['street1', 'city', 'postalcode']
 
     #keep all cols
@@ -357,6 +356,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     pd.DataFrame(concat).to_csv(output_csv, index=False)
     del concat
 
+    # reset connection to s3
     s3 = S3(**s3_args)
 
     # Update "last updated date" files on S3 for the latest file processed
@@ -364,8 +364,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
 
     print('Uploading public files to S3:')
     public_files = os.listdir(pub_dir)
-    with multiprocessing.Pool(processes=min((6, multiprocessing.cpu_count()))) as pool:
-        # work around for scope issue - Can't pickle local object ... could be reworked to avoid using starmap/zip
+    with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
         files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args)) 
         pool.starmap(upload_public_file, files_zip) 
 
@@ -389,7 +388,6 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
     );
     """)
-
 
     # setup pluto if it does not exist
     # # TODO: setup census tracts if it does not exist 
