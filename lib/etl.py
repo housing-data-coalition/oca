@@ -21,6 +21,7 @@ from .s3 import S3
 from .sftp import Sftp
 from .parsers import oca_tag, parse_file
 
+from .geocode_record import geocode_record, geocode_using_census_batch
 
 OCA_TABLES = [
     'oca_index',
@@ -117,18 +118,10 @@ def insert_staging_to_main(db):
     :param db: Database object
     """
 
-    db.sql("ALTER TABLE oca_index DISABLE TRIGGER ALL")
+    db.sql(f"DELETE FROM oca_index WHERE indexnumberid IN (SELECT indexnumberid FROM oca_index_staging)")
     for table in OCA_TABLES:
         if table in ('oca_metadata'): # skip these tables
-            continue
-        print(f"\t...Deleting older entries from {table}")
-        db.sql(f"DELETE FROM {table} WHERE indexnumberid IN (SELECT indexnumberid FROM oca_index_staging)")
-    db.sql("ALTER TABLE oca_index ENABLE TRIGGER ALL")
-
-    for table in OCA_TABLES:
-        if table in ('oca_metadata'): # skip these tables
-            continue
-        print(f"\t...Inserting to {table}")
+            continue 
         db.sql(f"INSERT INTO {table} SELECT * FROM {table}_staging")
         db.sql(f"DROP TABLE {table}_staging")
 
@@ -206,7 +199,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     sftp = Sftp(**sftp_args)
 
     s3 = S3(**s3_args)
-
+    
     # # For debugging only
     # priv_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data-private'))
     # pub_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data-public'))
@@ -223,10 +216,10 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         print('No new files to download from SFTP. Stopping process.')
         return True
 
-    # Before we can parse any file we need to set up the tables in the database. 
-    # If there is already a SQL dump in the S3 bucket we can rebuild from there, 
-    # otherwise we create the tables fresh.
-    prep_db(s3, db, priv_dir)
+    # # Before we can parse any file we need to set up the tables in the database. 
+    # # If there is already a SQL dump in the S3 bucket we can rebuild from there, 
+    # # otherwise we create the tables fresh.
+    # prep_db(s3, db, priv_dir)
 
     # If there are new files, download them.
     sftp = Sftp(**sftp_args) # Refresh connection since prep_db sometimes takes a while and socket will close
@@ -283,80 +276,86 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         print('  - Inserting from staging to main...')
         insert_staging_to_main(db)
 
-    # Create/upload a dump of the database to start with for next update
-    print('Creating database dump and uploading to s3')
-    db.dump_to(os.path.join(priv_dir, 'oca.dump'))
-
-    # Export tables as CSVs
+    # Export the aws db tables to csv files directly into the s3 bucket
     for t in OCA_TABLES:
-        csv_filepath = os.path.join(pub_dir, f"{t}.csv")
-        db.export_csv(t, csv_filepath)
+        print('-', f'{t} table from db to s3')
+        # to maintain consistent names for public level-1 csv files, we'll rename the level-2 version
+        s3_filename = t + '.csv'
+        if t == "oca_addresses":
+            s3_filename = "oca_addresses_private.csv"
+        db.sql(f"""
+                SELECT * from aws_s3.query_export_to_s3(
+                    'SELECT * from {t}', 
+                    aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/{s3_filename}', 'us-east-1'), 
+                    options :='FORMAT CSV, HEADER');
+                """)
 
-    if mode == "2":
-        # Geocode records before uploading to S3
-        from .geocode_record import geocode_record, geocode_using_census_batch
-        # Geocode 
-        input_csv = Path(pub_dir) / 'oca_addresses.csv'
-        output_csv = Path(pub_dir) /'oca_addresses.csv'
-        addr_cols = ['street1', 'city', 'postalcode']
+    # Export oca_addresses to local
+    csv_filepath = os.path.join(pub_dir, f"oca_addresses.csv")
+    db.export_csv('oca_addresses', csv_filepath)
 
-        #keep all cols
-        keep_cols = lambda x: x
+    # Geocode records 
+    input_csv = Path(pub_dir) / 'oca_addresses.csv'
+    output_csv = Path(pub_dir) /'oca_addresses.csv'
+    addr_cols = ['street1', 'city', 'postalcode']
 
-        df = pd.read_csv(
-            input_csv, 
-            dtype = str,
-            index_col = False, 
-            usecols=keep_cols,
-            keep_default_na=False
-        )
+    #keep all cols
+    keep_cols = lambda x: x
 
-        #filter for only records that need to be geocoded
-        df_1 = df[
-                ((pd.isna(df['lat'])) | (df['lat'] == '')) & 
-                ((df['house_number'] != '') | (pd.notna(df['house_number'])))
-            ].copy().reset_index()
-        print(f'Geocoding {len(df_1)} entries in {output_csv}.')
+    df = pd.read_csv(
+        input_csv, 
+        dtype = str,
+        index_col = False, 
+        usecols=keep_cols,
+        keep_default_na=False
+    )
 
-        records = df_1.to_dict('records')
+    #filter for only records that need to be geocoded
+    df_1 = df[
+            ((pd.isna(df['lat'])) | (df['lat'] == '')) & 
+            ((df['house_number'] != '') | (pd.notna(df['house_number'])))
+        ].copy().reset_index()
+    print(f'Geocoding {len(df_1)} entries in {output_csv}.')
 
-        # Geocode records using NYC GeoSupport
-        # TODO - check if pluto in the database matches the pluto version of the geosupport
-        with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
-            it = pd.DataFrame(pool.map(functools.partial(geocode_record, addr_cols=addr_cols), records, 10000))
+    records = df_1.to_dict('records')
 
-        del df_1 # delete unused objects to avoid docker's memory error / 137
-        del records 
+    # Geocode records using NYC GeoSupport
+    # TODO - check if pluto in the database matches the pluto version of the geosupport
+    with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+        it = pd.DataFrame(pool.map(functools.partial(geocode_record, addr_cols=addr_cols), records, 10000))
+
+    del df_1 # delete unused objects to avoid docker's memory error / 137
+    del records 
+    
+    # Geocode other records using the US Batch Census Geocoder
+    #   Sub-select for all addresses that are missing latitude; also needs to have a house number
+    df_2 = it[(((pd.isna(it['lat'])) | (it['lat'] == '')))].copy().reset_index()
+    print(f'Geocoding {len(df_2)} entries in {output_csv} using another geocoder. {datetime.now()}')
+
+    # # For debugging only
+    # # ---
+    # # data_split = np.split(df_2, range(chunk_size, df_2.shape[0], 10000))
+    # # geocode_using_census_batch(data_split[2], pub_dir)
+
+    with multiprocessing.Pool(processes=min([5, multiprocessing.cpu_count()])) as pool:
+        chunk_size = 2500 # census batch limit is 10,000. Smaller batches tend to work better
+        data_split = zip(np.split(df_2, range(chunk_size, df_2.shape[0], chunk_size)), repeat(pub_dir))
+        it_2 = pd.concat(pool.starmap(geocode_using_census_batch, data_split))
+        del df_2
+        del data_split
         
-        # Geocode other records using the US Batch Census Geocoder
-        #   Sub-select for all addresses that are missing latitude; also needs to have a house number
-        df_2 = it[(((pd.isna(it['lat'])) | (it['lat'] == '')))].copy().reset_index()
-        print(f'Geocoding {len(df_2)} entries in {output_csv} using another geocoder. {datetime.now()}')
-
-        # # For debugging only
-        # # ---
-        # # data_split = np.split(df_2, range(chunk_size, df_2.shape[0], 10000))
-        # # geocode_using_census_batch(data_split[2], pub_dir)
-
-        with multiprocessing.Pool(processes=min([5, multiprocessing.cpu_count()])) as pool:
-            chunk_size = 2500 # census batch limit is 10,000. Smaller batches tend to work better
-            data_split = zip(np.split(df_2, range(chunk_size, df_2.shape[0], chunk_size)), repeat(pub_dir))
-            it_2 = pd.concat(pool.starmap(geocode_using_census_batch, data_split))
-            del df_2
-            del data_split
-            
-        print(f'Done geocoding. {datetime.now()}')
-        # Concat and drop duplicates by keeping the last changes from US Batch Census Geocoder (overwrites the GeoSupport returns
-        export_cols = ['indexnumberid', 'street1', 'street2', 'city', 'state',
-            'postalcode', 'status', 'house_number', 'street_name', 'borough_code',
-            'place_name', 'sname', 'hnum', 'boro', 'lat', 'bin', 'bbl', 'cd',
-            'ct', 'council', 'grc', 'grc2', 'msg', 'msg2', 'lon', 'zip_code']
-        concat = pd.concat([df, it, it_2], ignore_index = True).drop_duplicates(subset=['indexnumberid'], ignore_index = True, keep = 'last')[export_cols]
-        del df
-        del it
-        del it_2
-        pd.DataFrame(concat).to_csv(output_csv, index=False)
-        del concat
+    print(f'Done geocoding. {datetime.now()}')
+    # Concat and drop duplicates by keeping the last changes from US Batch Census Geocoder (overwrites the GeoSupport returns
+    export_cols = ['indexnumberid', 'street1', 'street2', 'city', 'state',
+        'postalcode', 'status', 'house_number', 'street_name', 'borough_code',
+        'place_name', 'sname', 'hnum', 'boro', 'lat', 'bin', 'bbl', 'cd',
+        'ct', 'council', 'grc', 'grc2', 'msg', 'msg2', 'lon', 'zip_code']
+    concat = pd.concat([df, it, it_2], ignore_index = True).drop_duplicates(subset=['indexnumberid'], ignore_index = True, keep = 'last')[export_cols]
+    del df
+    del it
+    del it_2
+    pd.DataFrame(concat).to_csv(output_csv, index=False)
+    del concat
 
     s3 = S3(**s3_args)
 
@@ -370,89 +369,77 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args)) 
         pool.starmap(upload_public_file, files_zip) 
 
+    # # Create/upload a dump of the database as a backup
+    # print('Creating database dump and uploading to s3')
+    # db.dump_to(os.path.join(priv_dir, 'oca.dump'))
+
     # Upload raw data files and database dump to private folder in S3 bucket
     print('Uploading private files to S3:')
     for f in os.listdir(priv_dir):
         print('-', f)
         s3.upload_file(f"{S3_PRIVATE_FOLDER}/{f}", os.path.join(priv_dir, f))
 
-    # use s3 import to overwrite tables in the remote RDS
-    if remote_db_args['db_url']:
-        print('Importing csvs to the RDS:')
-        remote_db = Database(**remote_db_args)
+    # reset oca_addresses (removes geom), and uses the geocoded s3 import to overwrite oca_addresses table
+    print('-', f'overwrite oca_addresses with geocoded version')
+    db.execute_sql_file('reset_addresses_table.sql')
+    db.sql(f"""
+        SELECT aws_s3.table_import_from_s3(
+        'oca_addresses', '', '(FORMAT CSV, HEADER)',
+        aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/oca_addresses_private.csv', 'us-east-1'),
+        aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
+    );
+    """)
+
+
+    # setup pluto if it does not exist
+    # # TODO: setup census tracts if it does not exist 
+    if not db.sql_fetch_one(
+        "SELECT * FROM information_schema.tables WHERE table_name = 'pluto'"):
+        pluto_file = download_pluto(pub_dir)
         
-        # reset tables from scratch
-        remote_db.execute_sql_file('create_tables.sql')
 
-        # import tables from s3
-        for t in OCA_TABLES:
-            print('-', f'{t} table to remote db')
-            s3_name = t
-            if mode == "2" and t == "oca_addresses":
-                s3_name = "oca_addresses_private"
-            remote_db.sql(f"""
-                SELECT aws_s3.table_import_from_s3(
-                '{t}', '', '(FORMAT CSV, HEADER)',
-                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/{s3_name}.csv', 'us-east-1'),
-                aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
-            );
-            """)
+        print('uploading pluto to s3')
+        s3.upload_file(f"{S3_PUBLIC_FOLDER}/pluto.csv", pluto_file)
 
-        # setup pluto if it does not exist
-        if not db.sql_fetch_one(
-            "SELECT * FROM information_schema.tables WHERE table_name = 'pluto'"):
-            pluto_file = download_pluto(pub_dir)
-            
-            if remote_db_args['db_url']:     
-                    print('uploading pluto to s3')
-                    s3.upload_file(f"{S3_PUBLIC_FOLDER}/pluto.csv", pluto_file)
-
-                    print('importing pluto to db')
-                    db.execute_sql_file('create_pluto_table.sql')
-                    
-                    db.sql(f"""
-                        SELECT aws_s3.table_import_from_s3(
-                        'pluto', '', '(FORMAT CSV, HEADER)',
-                        aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/pluto.csv', 'us-east-1'),
-                        aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
-                    );
-                    """)
-            else:
-                db.execute_sql_file('create_pluto_table.sql')
-                db.import_csv('pluto', pluto_file)
+        print('importing pluto to db')
+        db.execute_sql_file('create_pluto_table.sql')
                 
-            db.execute_sql_file('alter_pluto_table.sql')
+        db.sql(f"""
+            SELECT aws_s3.table_import_from_s3(
+            'pluto', '', '(FORMAT CSV, HEADER)',
+            aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/pluto.csv', 'us-east-1'),
+            aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
+        );
+        """)
+   
+        db.execute_sql_file('alter_pluto_table.sql')
 
-    # TODO: setup census tracts if it does not exist 
-            
+   
+    # create views and grant access to folks
+    db.execute_sql_file('create_addresses_views.sql')
 
-    if mode == "2":
-        if remote_db_args['db_url']:
-            db = Database(**remote_db_args)
-        else:
-            # Todo: Check if local database as postgis setup (also change the docker image to postgis)
-            quit()
-            
-        # create views and grant access to folks
-        db.execute_sql_file('create_addresses_views.sql')
+    # export views directly to s3
+    print(f"Creating oca_addresses_with_bbl and exporting to S3")
+    db.sql(f"""
+            SELECT * from aws_s3.query_export_to_s3(
+                'SELECT * from oca_addresses_with_bbl', 
+                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/oca_addresses_with_bbl.csv', 'us-east-1'), 
+                options :='FORMAT CSV, HEADER'); 
+        """)
 
-        # download bbl view as csv and upload to s3
-        view = "oca_addresses_with_bbl"
-        print(f"Creating {view} and uploadng to S3")
-        csv_filepath = os.path.join(pub_dir, f"{view}.csv")
-        db.export_view_as_csv(view, csv_filepath)
-        s3.upload_file(f"{S3_PUBLIC_FOLDER}/{view}.csv", os.path.join(pub_dir, f"{view}.csv"))
+    print(f"Creating oca_addresses_with_ct and exporting to S3")
+    db.sql(f"""
+            SELECT * from aws_s3.query_export_to_s3(
+                'SELECT * from oca_addresses_with_ct', 
+                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/oca_addresses_with_ct.csv', 'us-east-1'), 
+                options :='FORMAT CSV, HEADER'); 
+        """)
 
-        view = "oca_addresses_with_ct"
-        print(f"Creating {view} and uploadng to S3")
-        csv_filepath = os.path.join(pub_dir, f"{view}.csv")
-        db.export_view_as_csv(view, csv_filepath)
-        s3.upload_file(f"{S3_PUBLIC_FOLDER}/{view}.csv", os.path.join(pub_dir, f"{view}.csv"))
-
-        # add level-1 version of address table from level-2 data and maintain consistent name
-        view = "oca_addresses_public"
-        s3_filename = "oca_addresses"
-        print(f"Creating {view} and uploadng to S3")
-        csv_filepath = os.path.join(pub_dir, f"{view}.csv")
-        db.export_view_as_csv(view, csv_filepath)
-        s3.upload_file(f"{S3_PUBLIC_FOLDER}/{s3_filename}.csv", os.path.join(pub_dir, f"{view}.csv"))
+    # add level-1 version of address table from level-2 data and maintain consistent name
+    print(f"Creating oca_addresses_public and exporting to S3")
+    db.sql(f"""
+        SELECT * from aws_s3.query_export_to_s3(
+            'SELECT * from oca_addresses_public', 
+            aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/oca_addresses.csv', 'us-east-1'), 
+            options :='FORMAT CSV, HEADER'); 
+    """)
