@@ -1,4 +1,5 @@
 .git/
+.gitignore
 Dockerfile
 docker-compose.yml
 __pycache__/
@@ -9,3 +10,6 @@ data-clean/
 venv/
 todo
 .DS_Store
+.env
+data-private/
+data-public/
