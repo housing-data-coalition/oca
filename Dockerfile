@@ -19,12 +19,12 @@ RUN apt-get install -y \
 # Check the latest version here https://www.nyc.gov/site/planning/data-maps/open-data/dwn-gdelx.page
 ENV RELEASE=23d
 ENV MAJOR=23
-ENV MINOR=3
+ENV MINOR=4
 ENV PATCH=0
 WORKDIR /geosupport
 
 RUN  pip install python-geosupport; \
-    FILE_NAME=linux_geo${RELEASE}_${MAJOR}_${MINOR}.zip; \
+    FILE_NAME=linux_geo${RELEASE}_${MAJOR}.${MINOR}.zip; \
     echo ${FILE_NAME}; \
     curl -O https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/$FILE_NAME; \
     unzip *.zip; \
