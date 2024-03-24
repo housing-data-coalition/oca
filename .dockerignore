@@ -9,3 +9,6 @@ data-clean/
 venv/
 todo
 .DS_Store
+.env
+lib/data-private/
+lib/data-public/
