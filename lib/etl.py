@@ -195,6 +195,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     """
 
     db = Database(**db_args)
+    staging_db = Database(db_url = 'postgres://postgres:oca@db/oca')
 
     sftp = Sftp(**sftp_args)
 
@@ -254,7 +255,13 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         print('-', os.path.basename(zip_file))
 
         print('  - Creating staging tables...')
-        db.execute_sql_file('create_tables_staging.sql')
+        staging_db.execute_sql_file('create_tables.sql')
+        staging_db.execute_sql_file('create_tables_staging.sql')
+        # grab oca_metadata from s3 and import to staging_db (todo rework on this table is parsed)
+        csv_filepath = os.path.join(pub_dir, f"oca_metadata.csv")
+        db.export_csv('oca_metadata', csv_filepath)
+        staging_db.import_csv('oca_metadata', csv_filepath)
+        os.remove(csv_filepath) # clean up
 
         print('  - Parsing XML file...')
         extract_date = None
@@ -268,7 +275,26 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
                     break
 
         with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
-            parse_file(xml_file, db, extract_date)
+            parse_file(xml_file, staging_db, extract_date)
+
+        # export staging tables, upload to s3, and then rds
+        for t in OCA_TABLES:
+            csv_filepath = os.path.join(pub_dir, f"{t + '_staging'}.csv")
+            db.export_csv(t + '_staging', csv_filepath)
+        public_files = os.listdir(pub_dir)
+        with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
+            files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args)) 
+            pool.starmap(upload_public_file, files_zip) 
+        db.execute_sql_file('create_tables_staging.sql')
+        for t in OCA_TABLES:
+            print('-', f"{t + '_staging'} table to db")
+            db.sql(f"""
+                SELECT aws_s3.table_import_from_s3(
+                '{t + '_staging'}', '', '(FORMAT CSV, HEADER)',
+                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/{t + '_staging'}.csv', 'us-east-1'),
+                aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
+            );
+            """)
 
         print('\n   - Updating appearance outcomes...')
         db.execute_sql_file('update_appearance_outcomes.sql')

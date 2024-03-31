@@ -78,3 +78,11 @@ CREATE TABLE IF NOT EXISTS oca_warrants_staging (
 	INCLUDING DEFAULTS
 	INCLUDING INDEXES
 );
+
+
+DROP TABLE IF EXISTS oca_metadata_staging;
+CREATE TABLE IF NOT EXISTS oca_metadata_staging (
+	LIKE oca_metadata
+	INCLUDING DEFAULTS
+	INCLUDING INDEXES
+);
