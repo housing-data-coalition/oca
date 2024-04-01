@@ -1,4 +1,4 @@
-DROP TABLE IF EXISTS oca_index_staging;
+DROP TABLE IF EXISTS oca_index_staging CASCADE;
 CREATE TABLE IF NOT EXISTS oca_index_staging (
 	LIKE oca_index 
 	INCLUDING DEFAULTS
@@ -12,11 +12,35 @@ CREATE TABLE IF NOT EXISTS oca_causes_staging (
 	INCLUDING INDEXES
 );
 
+-- hardcode oca_addresses since some versions of this table can have geom
 DROP TABLE IF EXISTS oca_addresses_staging;
 CREATE TABLE IF NOT EXISTS oca_addresses_staging (
-	LIKE oca_addresses 
-	INCLUDING DEFAULTS
-	INCLUDING INDEXES
+  indexnumberid text,
+  street1 text,
+  street2 text,
+  city text,
+  state text,
+  postalcode text,
+  status text,
+  house_number text,
+  street_name text,
+  borough_code text,
+  place_name text,
+  sname text,
+  hnum text,
+  boro text,
+  lat real,
+  bin text,
+  bbl text,
+  cd text,
+  ct text,
+  council text,
+  grc text,
+  grc2 text,
+  msg text,
+  msg2 text,
+  lon real,
+  zip_code text
 );
 
 DROP TABLE IF EXISTS oca_parties_staging;
@@ -75,13 +99,6 @@ CREATE TABLE IF NOT EXISTS oca_judgments_staging (
 DROP TABLE IF EXISTS oca_warrants_staging;
 CREATE TABLE IF NOT EXISTS oca_warrants_staging (
 	LIKE oca_warrants 
-	INCLUDING DEFAULTS
-	INCLUDING INDEXES
-);
-
-DROP TABLE IF EXISTS oca_metadata_staging;
-CREATE TABLE IF NOT EXISTS oca_metadata_staging (
-	LIKE oca_metadata
 	INCLUDING DEFAULTS
 	INCLUDING INDEXES
 );

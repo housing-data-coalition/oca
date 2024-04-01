@@ -111,17 +111,27 @@ def insert_staging_to_main(db):
     Delete all cases from main tables if they exist in the staging table, 
     then insert all records from the staging tables to the main tables
 
-    bug: DISABLE TRIGGER ALL to a work around to avoid DELETE FROM command stalling. 
-        A VACUUM FULL on all the tables were tried, it does not seem to helpl
-        Might be a database setting.
+    issue: SET session_replication_role = replica 
+        https://stackoverflow.com/questions/3942258/how-do-i-temporarily-disable-triggers-in-postgresql/18709987#18709987 
+        to a work around to avoid DELETE FROM command stalling. 
+        A VACUUM FULL on all the tables were tried, it does not seem to help
+        Might be an issue with the staging table schema?
 
     :param db: Database object
     """
 
-    db.sql(f"DELETE FROM oca_index WHERE indexnumberid IN (SELECT indexnumberid FROM oca_index_staging)")
+    db.sql("SET session_replication_role = replica;")
     for table in OCA_TABLES:
         if table in ('oca_metadata'): # skip these tables
-            continue 
+            continue
+        print(f"\t...Deleting older entries from {table}")
+        db.sql(f"DELETE FROM {table} WHERE indexnumberid IN (SELECT indexnumberid FROM oca_index_staging)")
+    db.sql("SET session_replication_role = default;")
+
+    for table in OCA_TABLES:
+        if table in ('oca_metadata'): # skip these tables
+            continue
+        print(f"\t...Inserting to {table}")
         db.sql(f"INSERT INTO {table} SELECT * FROM {table}_staging")
         db.sql(f"DROP TABLE {table}_staging")
 
@@ -277,17 +287,6 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
             parse_file(xml_file, staging_db, extract_date)
 
-        # export staging tables, upload to s3, and then rds
-        staging_tables = [t + '_staging' for t in OCA_TABLES] + 'oca_metadata'
-
-        for t in staging_tables:
-            csv_filepath = os.path.join(pub_dir, f"{t}.csv")
-            db.export_csv(t, csv_filepath)
-        public_files = os.listdir(pub_dir)
-        with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
-            files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args)) 
-            pool.starmap(upload_public_file, files_zip) 
-        
         # reset staging tables
         db.execute_sql_file('create_tables_staging.sql')
         # reset metadata table (todo rework on oca_metadata table is parsed)
@@ -303,15 +302,29 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
                CREATE INDEX ON oca_metadata (indexnumberid);
 
         """) 
+
+        # # export staging tables, upload to s3, and then rds
+        staging_tables = [t + '_staging' for t in OCA_TABLES] + ['oca_metadata']
+        for t in staging_tables:
+            csv_filepath = os.path.join(pub_dir, f"{t}.csv")
+            staging_db.export_csv(t, csv_filepath)
+        public_files = os.listdir(pub_dir)
+        with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
+            files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args)) 
+            pool.starmap(upload_public_file, files_zip) 
+        
         for t in staging_tables:
             print('-', f"{t} table to db")
-            db.sql(f"""
-                SELECT aws_s3.table_import_from_s3(
-                '{t + '_staging'}', '', '(FORMAT CSV, HEADER)',
-                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/{t}.csv', 'us-east-1'),
-                aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
-            );
-            """)
+            # only upload if csv has rows
+            csv_filepath = os.path.join(pub_dir, f"{t}.csv")
+            if len(pd.read_csv(csv_filepath)): # todo - rewrite not to use pandas (csv? or just read file lines using unix)
+                db.sql(f"""
+                    SELECT aws_s3.table_import_from_s3(
+                    '{t}', '', '(FORMAT CSV, HEADER)',
+                    aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/{t}.csv', 'us-east-1'),
+                    aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
+                );
+                """)
 
         print('\n   - Updating appearance outcomes...')
         db.execute_sql_file('update_appearance_outcomes.sql')
