@@ -1,5 +1,7 @@
 # NYC Housing Court Filings
 
+!!! This branch uses rds and s3 as the main database, and the local as stagging to avoid having to restore from .dumps
+
 The [Housing Data Coalition](https://www.housingdatanyc.org/) (HDC) has received housing court filings data from the New York State Office of Court Administration (OCA). In this repository we manage the Extract-Transform-Load (ETL) process for getting raw XML filings data from OCA via SFTP, parsing the nested XML data into a set of tables, and making those CSV files publicly available for download.
 
 To work with these data you can use the [NYCDB](https://github.com/nycdb/nycdb) to automatically load all of the tables into a PostgreSQL database for analysis. You can also find documentation about the data, including a [data dictionary](https://docs.google.com/spreadsheets/d/1GMDomQr8gEave6uLpLby9gQU0oMoGRL39kQdNbBJEqE) on the [NYCDB wiki](https://github.com/nycdb/nycdb/wiki/Dataset:-OCA-Housing-Court-Records).
@@ -61,17 +63,6 @@ To run the whole process in the docker container run:
 ```
 docker-compose run app
 ```
-
-### Modes
-
-This ETL process has two modes: Level 1 and Level 2. Level 1 accesses the SFTP for general OCA usage and produces an `oca_addresses` CSV file with a column for zipcode. Level 2 accesses a more restrictive SFTP and produces an `oca_addresses` CSV file with the building address columns (address without apartment or unit number) and an additional `oca_addresses_with_bbl` CSV file that only displays rows and data if the Borough-Block-Lot (BBL) or tax lot has 11 or more units. To switch between modes, edit the `MODE` variable in the .env file.
-
-Mode 1 can run on both SFTP Level 1 and Level 2, but Mode 2 can only run on the Level 2 SFTP. Additional security measures need to be put in place for the database, the `oca_addresses` table, and the CSV of the Level 2 data.
-
-Mode 2 adds PLUTO as an additional dataset and installs the matching version of [GeoSupport](https://www.nyc.gov/site/planning/data-maps/open-data/dwn-gde-home.page).
-
-You need to re-run `docker-compose build` when switching modes. To see echo outputs in your terminal for debugging, run `docker-compose build --progress=plain`.
-
 
 ### General rules for setting up a S3 Bucket
 
