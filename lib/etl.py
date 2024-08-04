@@ -371,6 +371,10 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
             ((pd.isna(df['lat'])) | (df['lat'] == '')) & 
             ((df['house_number'] != '') | (pd.notna(df['house_number'])))
         ].copy().reset_index()
+    
+    # # DEBUG: geocode all records
+    # df_1 = df
+
     print(f'Geocoding {len(df_1)} entries in {output_csv}.')
 
     records = df_1.to_dict('records')
@@ -462,7 +466,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         db.sql(f"""
             SELECT aws_s3.table_import_from_s3(
             'pluto', '', '(FORMAT CSV, HEADER)',
-            aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/pluto.csv', 'us-east-1'),
+            aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/pluto_24v2.csv', 'us-east-1'),
             aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
         );
         """)
