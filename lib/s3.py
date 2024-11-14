@@ -55,8 +55,7 @@ def put_object(s3_client, dest_bucket_name, dest_object_name, src_data, content_
 		'Bucket': dest_bucket_name, 
 		'Key': dest_object_name, 
 		'Body': object_data,
-		'ContentType': content_type,
-		'ServerSideEncryption': 'AES256' # Amazon S3 managed keys (SSE-S3)
+		'ContentType': content_type
 	}
 
 	if cache_control != '':
