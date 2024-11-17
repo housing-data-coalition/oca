@@ -17,9 +17,21 @@ RUN apt-get install -y \
   rm -rf /var/lib/apt/lists/*
 
 # Check the latest version here https://www.nyc.gov/site/planning/data-maps/open-data/dwn-gdelx.page
-ENV RELEASE=23d
-ENV MAJOR=23
-ENV MINOR=4
+# Copy the link to see the verison numbers
+# Example: https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/linux_geo24c_24.3.zip
+# In the script set if statement under the comment '# setup pluto if it does not exist' to True
+# 
+# To manually update:
+# Upload pluto.csv to s3 and run ./lib/sql/create_pluto_table.sql, Then
+# SELECT aws_s3.table_import_from_s3(
+# 'pluto', '', '(FORMAT CSV, HEADER)',
+# aws_commons.create_s3_uri('oca-2-dev', 'public/pluto.csv', 'us-east-1'),
+# aws_commons.create_aws_credentials('id', 'key', '')
+# );
+# Lastly alter_pluto_table.sql
+ENV RELEASE=24c
+ENV MAJOR=24
+ENV MINOR=3
 ENV PATCH=0
 WORKDIR /geosupport
 
@@ -44,4 +56,4 @@ CMD ["python", "oca_update.py"]
 
 ENV PATH /var/pydev/bin:$PATH
 ENV PYTHONPATH /var/pydev
-ENV PYTHONUNBUFFERED yup
+ENV PYTHONUNBUFFERED 1

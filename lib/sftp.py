@@ -1,6 +1,7 @@
 import pysftp
 import shutil
 import os
+import subprocess
 import re
 
 class Sftp:
@@ -8,9 +9,15 @@ class Sftp:
 
     def __init__(self, host, user, pswd, dir):
         # Authorize SSH Host for SFTP connection
-        os.system("ssh-keyscan -t dsa {host} >> ~/.ssh/known_hosts")
+        known_hosts_path = os.path.expanduser('~/.ssh/known_hosts')
+        os.makedirs(os.path.dirname(known_hosts_path), exist_ok=True)
+        try:
+            subprocess.run(['ssh-keyscan', '-H', host], stdout=open(known_hosts_path, 'a'), check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Error running ssh-keyscan: {e}")
+        cnopts = pysftp.CnOpts(knownhosts=known_hosts_path)
 
-        self.sftp = pysftp.Connection(host=host, username=user, password=pswd)
+        self.sftp = pysftp.Connection(host=host, username=user, password=pswd, cnopts=cnopts)
         self.dir = dir
 
 

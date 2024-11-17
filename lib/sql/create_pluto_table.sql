@@ -1,5 +1,9 @@
 -- schema for 23v1.2
-CREATE TABLE pluto (
+DROP view IF EXISTS oca_addresses_with_bbl cascade;
+DROP view IF EXISTS oca_addresses_with_ct cascade;
+
+DROP TABLE IF EXISTS pluto;
+CREATE TABLE IF NOT EXISTS pluto(
 	borough varchar(2) NULL,
 	block int4 NULL,
 	lot int4 NULL,
@@ -93,6 +97,3 @@ CREATE TABLE pluto (
 	longitude float8 NULL,
 	notes text NULL
 );
-
-drop view if exists oca_addresses_with_bbl cascade;
-drop view if exists oca_addresses_with_ct cascade;
