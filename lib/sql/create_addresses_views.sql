@@ -27,8 +27,7 @@ CREATE OR REPLACE VIEW public.oca_addresses_with_bbl AS
 			ELSE NULL
 		END AS bbl
 	FROM oca_addresses o
-	LEFT JOIN 
-		pluto USING(bbl);
+	LEFT JOIN pluto p ON LEFT(p.bbl, 10) = o.bbl;
 
 -- update oca_addresses with geom field
 ALTER TABLE oca_addresses 
