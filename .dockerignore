@@ -1,15 +1,21 @@
+# configs and git
 .git/
 .gitignore
+.idea/
+
+# python and docker
+.venv/
+.env
 Dockerfile
 docker-compose.yml
 __pycache__/
-.idea/
+
+# data folders
 data/
 data-raw/
 data-clean/
-venv/
-todo
-.DS_Store
-.env
 data-private/
 data-public/
+
+# macos
+.DS_Store

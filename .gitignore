@@ -1,12 +1,19 @@
-__pycache__/
+# configs and git
+.git/
 .idea/
+
+# python
+.venv/
+.env
+__pycache__/
+.ipynb_checkpoints
+
+# data folders
 data/
+data-raw/
+data-clean/
 data-private/
 data-public/
-.env
-venv/
-todo
-.DS_Store
-scratch.py
 
-notebooks/
+# macos
+.DS_Store

@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS tracts (
 --   geom Geometry(MultiPolygon, 4326)
 );
 
+-- import then up the following below
+
 ALTER TABLE tracts
   ADD COLUMN geom Geometry(MultiPolygon, 4326);
 

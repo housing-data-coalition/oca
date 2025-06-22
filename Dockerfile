@@ -1,24 +1,22 @@
-FROM python:3.11.4
+FROM --platform=linux/amd64 python:3.12-slim-bookworm
 ENV TZ=America/New_York
 
-# Update package lists
-RUN apt-get update 
+# Update package lists and setup Python with uv
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates python3
+ADD https://astral.sh/uv/install.sh /uv-installer.sh
+RUN sh /uv-installer.sh && rm /uv-installer.sh
+ENV PATH="/root/.local/bin/:$PATH"
 
-# Setup Python
-RUN apt-get install -y python3 python3-pip
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+# Install requirements and set as default venv
+COPY . /app
+WORKDIR /app
+RUN uv sync --locked
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONUNBUFFERED 1
 
-# Setup PostgresSQL and clean up
-RUN apt-get install -y \
-    unzip \
-    curl \
-    postgresql-client && \
-  rm -rf /var/lib/apt/lists/*
-
-# Check the latest version here https://www.nyc.gov/site/planning/data-maps/open-data/dwn-gdelx.page
+# Check the latest version here https://www.nyc.gov/content/planning/pages/resources/geocoding/geosupport-desktop-edition
 # Copy the link to see the verison numbers
-# Example: https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/linux_geo24c_24.3.zip
+# Example: https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/geosupport/linux_geo25A1_25.11.zip
 # In the script set if statement under the comment '# setup pluto if it does not exist' to True
 # 
 # To manually update:
@@ -29,16 +27,15 @@ RUN apt-get install -y \
 # aws_commons.create_aws_credentials('id', 'key', '')
 # );
 # Lastly alter_pluto_table.sql
-ENV RELEASE=24c
-ENV MAJOR=24
-ENV MINOR=3
-ENV PATCH=0
+ENV RELEASE=25A1
+ENV MAJOR=25
+ENV MINOR=11
 WORKDIR /geosupport
 
-RUN  pip install python-geosupport; \
+RUN uv pip install python-geosupport; \
     FILE_NAME=linux_geo${RELEASE}_${MAJOR}.${MINOR}.zip; \
     echo ${FILE_NAME}; \
-    curl -O https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/$FILE_NAME; \
+    curl -O https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/geosupport/$FILE_NAME; \
     unzip *.zip; \
     rm *.zip; 
 
@@ -48,12 +45,5 @@ ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/geosupport/version-${RELEASE}_${MAJOR}.${M
 # Create ssh folder
 RUN mkdir -p ~/.ssh && chmod 0700 ~/.ssh 
 
-COPY . /app
-
 WORKDIR /app
-
-CMD ["python", "oca_update.py"]
-
-ENV PATH /var/pydev/bin:$PATH
-ENV PYTHONPATH /var/pydev
-ENV PYTHONUNBUFFERED 1
+# CMD ["python", "oca_update.py"]
