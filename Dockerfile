@@ -2,20 +2,16 @@ FROM --platform=linux/amd64 python:3.12-slim-bookworm
 ENV TZ=America/New_York
 
 # Update package lists and setup Python with uv
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates python3
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    openssh-client curl ca-certificates python3 unzip && \
+    rm -rf /var/lib/apt/lists/*
 ADD https://astral.sh/uv/install.sh /uv-installer.sh
 RUN sh /uv-installer.sh && rm /uv-installer.sh
 ENV PATH="/root/.local/bin/:$PATH"
 
-# Install requirements and set as default venv
-COPY . /app
-WORKDIR /app
-RUN uv sync --locked
-ENV PATH="/app/.venv/bin:$PATH"
-ENV PYTHONUNBUFFERED 1
-
-# Check the latest version here https://www.nyc.gov/content/planning/pages/resources/geocoding/geosupport-desktop-edition
-# Copy the link to see the verison numbers
+# Check the latest version of Geosupport Desktop Edition™ - Linux version
+# at https://www.nyc.gov/content/planning/pages/resources/geocoding/geosupport-desktop-edition
 # Example: https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/geosupport/linux_geo25A1_25.11.zip
 # In the script set if statement under the comment '# setup pluto if it does not exist' to True
 # 
@@ -32,15 +28,24 @@ ENV MAJOR=25
 ENV MINOR=11
 WORKDIR /geosupport
 
-RUN uv pip install python-geosupport; \
-    FILE_NAME=linux_geo${RELEASE}_${MAJOR}.${MINOR}.zip; \
+RUN FILE_NAME=linux_geo${RELEASE}_${MAJOR}.${MINOR}.zip; \
     echo ${FILE_NAME}; \
     curl -O https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/geosupport/$FILE_NAME; \
     unzip *.zip; \
-    rm *.zip; 
+    rm *.zip; \
+    ACTUAL_FOLDER=$(ls -d version-* | head -1); \
+    ln -s "$ACTUAL_FOLDER" current_version
 
-ENV GEOFILES=/geosupport/version-${RELEASE}_${MAJOR}.${MINOR}/fls/
-ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/geosupport/version-${RELEASE}_${MAJOR}.${MINOR}/lib/
+# Copy app and create virtual environment
+COPY . /app
+WORKDIR /app
+RUN uv sync --locked
+
+# Set environment variables
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+ENV GEOFILES=/geosupport/current_version/fls/
+ENV LD_LIBRARY_PATH=/geosupport/current_version/lib/
 
 # Create ssh folder
 RUN mkdir -p ~/.ssh && chmod 0700 ~/.ssh 

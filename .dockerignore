@@ -11,11 +11,13 @@ docker-compose.yml
 __pycache__/
 
 # data folders
+staging.db
 data/
 data-raw/
 data-clean/
-data-private/
-data-public/
+lib/data-private/
+lib/data-public/
 
 # macos
 .DS_Store
+.Trash-0/

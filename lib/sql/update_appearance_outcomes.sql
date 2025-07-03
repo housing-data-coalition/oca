@@ -9,13 +9,18 @@
 
 INSERT INTO oca_appearance_outcomes_staging 
 	SELECT 
-		a.indexnumberid, 
-		a.appearanceid, 
+		a.indexnumberid,
+		a.appearanceid,
 		x.appearanceoutcometype,
 		x.outcomebasedontype
 	FROM 
-		oca_appearances_staging AS a, 
-		json_to_recordset(a.appearanceoutcomes) 
-			AS x(appearanceoutcometype text, outcomebasedontype text);
+		oca_appearances_staging AS a
+	CROSS JOIN LATERAL json_to_recordset(
+		CASE 
+			WHEN json_typeof(a.appearanceoutcomes) = 'array' 
+			THEN a.appearanceoutcomes -- deal with empty objects {}
+			ELSE json_build_array(a.appearanceoutcomes)
+		END
+	) AS x(appearanceoutcometype text, outcomebasedontype text);
 
 ALTER TABLE oca_appearances_staging DROP COLUMN appearanceoutcomes;

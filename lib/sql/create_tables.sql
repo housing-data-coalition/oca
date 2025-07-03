@@ -2,7 +2,7 @@ DROP VIEW IF EXISTS oca_addresses_with_bbl CASCADE;
 DROP VIEW IF EXISTS oca_addresses_with_ct CASCADE;
 
 DROP TABLE IF EXISTS oca_index CASCADE;
-CREATE TABLE IF NOT EXISTS oca_index (
+CREATE TABLE oca_index (
 	indexnumberid text PRIMARY KEY,
 	court text,
 	fileddate date,
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS oca_index (
 );
 
 DROP TABLE IF EXISTS oca_causes CASCADE;
-CREATE TABLE IF NOT EXISTS oca_causes (
+CREATE TABLE oca_causes (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   causeofactiontype text,
   interestfromdate date,
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS oca_causes (
 );
 
 DROP TABLE IF EXISTS oca_addresses CASCADE;
-CREATE TABLE IF NOT EXISTS oca_addresses (
+CREATE TABLE oca_addresses (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   street1 text,
   street2 text,
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS oca_addresses (
 );
 
 DROP TABLE IF EXISTS oca_parties CASCADE;
-CREATE TABLE IF NOT EXISTS oca_parties (
+CREATE TABLE oca_parties (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   role text,
   partytype text,
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS oca_parties (
 );
 
 DROP TABLE IF EXISTS oca_events CASCADE;
-CREATE TABLE IF NOT EXISTS oca_events (
+CREATE TABLE oca_events (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   eventname text,
   fileddate date,
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS oca_events (
 );
 
 DROP TABLE IF EXISTS oca_appearances CASCADE;
-CREATE TABLE IF NOT EXISTS oca_appearances (
+CREATE TABLE oca_appearances (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   appearanceid bigserial,
   appearancedatetime timestamp,
@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS oca_appearances (
 );
 
 DROP TABLE IF EXISTS oca_appearance_outcomes CASCADE;
-CREATE TABLE IF NOT EXISTS oca_appearance_outcomes (
+CREATE TABLE oca_appearance_outcomes (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   appearanceid bigint,
   appearanceoutcometype text,
@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS oca_appearance_outcomes (
 );
 
 DROP TABLE IF EXISTS oca_motions CASCADE;
-CREATE TABLE IF NOT EXISTS oca_motions (
+CREATE TABLE oca_motions (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   sequence int,
   motiontype text,
@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS oca_motions (
 
 
 DROP TABLE IF EXISTS oca_decisions CASCADE;
-CREATE TABLE IF NOT EXISTS oca_decisions (
+CREATE TABLE oca_decisions (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   sequence int,
   resultof text,
@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS oca_decisions (
 
 
 DROP TABLE IF EXISTS oca_judgments CASCADE;
-CREATE TABLE IF NOT EXISTS oca_judgments (
+CREATE TABLE oca_judgments (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   sequence int,
   amendedfromjudgmentsequence int,
@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS oca_judgments (
 );
 
 DROP TABLE IF EXISTS oca_warrants CASCADE;
-CREATE TABLE IF NOT EXISTS oca_warrants (
+CREATE TABLE oca_warrants (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   judgmentsequence int,
   sequence text,
@@ -161,7 +161,7 @@ CREATE TABLE IF NOT EXISTS oca_warrants (
 );
 
 DROP TABLE IF EXISTS oca_metadata CASCADE;
-CREATE TABLE IF NOT EXISTS oca_metadata (
+CREATE TABLE oca_metadata (
   -- we don't want to delete records here when deleted from others
 	indexnumberid text PRIMARY KEY,
   initialdate date,

@@ -1,4 +1,4 @@
--- schema for 23v1.2
+-- schema for 25v1.1
 DROP view IF EXISTS oca_addresses_with_bbl cascade;
 DROP view IF EXISTS oca_addresses_with_ct cascade;
 

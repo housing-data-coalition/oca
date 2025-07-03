@@ -4,6 +4,7 @@ import shutil
 import zipfile
 import requests
 import re
+import json
 from datetime import datetime
 # TODO - replace os.path with Pathlib and its '/' operator
 from pathlib import Path 
@@ -17,6 +18,7 @@ from lxml import etree
 import sys
 
 from .database import Database
+from .duckdb_database import DuckDB
 from .s3 import S3
 from .sftp import Sftp
 from .parsers import oca_tag, parse_file
@@ -106,7 +108,7 @@ def prep_db(s3, db, local_dir):
         db.execute_sql_file('create_tables.sql')
 
 
-def insert_staging_to_main(db):
+def insert_staging_to_main(db, tables):
     """ 
     Delete all cases from main tables if they exist in the staging table, 
     then insert all records from the staging tables to the main tables
@@ -121,14 +123,14 @@ def insert_staging_to_main(db):
     """
 
     db.sql("SET session_replication_role = replica;")
-    for table in OCA_TABLES:
+    for table in tables:
         if table in ('oca_metadata'): # skip these tables
             continue
         print(f"\t...Deleting older entries from {table}")
         db.sql(f"DELETE FROM {table} WHERE indexnumberid IN (SELECT indexnumberid FROM oca_index_staging)")
     db.sql("SET session_replication_role = default;")
 
-    for table in OCA_TABLES:
+    for table in tables:
         if table in ('oca_metadata'): # skip these tables
             continue
         print(f"\t...Inserting to {table}")
@@ -163,8 +165,8 @@ def download_pluto(output_dir):
     """
     print('downloading pluto')
 
-    # Check https://www.nyc.gov/site/planning/data-maps/open-data/dwn-pluto-mappluto.page for updates
-    PLUTO_CSV_URL = 'https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/nyc_pluto_23v3_csv.zip'
+    # Check https://www.nyc.gov/content/planning/pages/resources/datasets/mappluto-pluto-change for updates
+    PLUTO_CSV_URL = 'https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/pluto/nyc_pluto_25v1_1_csv.zip'
 
     #download and unzip
     response = requests.get(PLUTO_CSV_URL)
@@ -205,13 +207,12 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     """
 
     db = Database(**db_args)
-    staging_db = Database(db_url = 'postgres://postgres:oca@db/oca')
-
+    Path('staging.duckdb').unlink(missing_ok=True)
+    staging_db = DuckDB(dbname='staging.duckdb')
     sftp = Sftp(**sftp_args)
-
     s3 = S3(**s3_args)
     
-    # # For debugging only
+    # # For debugging only -- does not clear the folders like the make_dir function
     # priv_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data-private'))
     # pub_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data-public'))
 
@@ -222,64 +223,36 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     # Get list of new files to download from SFTP
     new_sftp_zip_files = list_new_data_files(sftp, s3)
 
-    # # If there are no new files we can stop everything here. 
+    # If there are no new files we can stop everything here. 
     if not new_sftp_zip_files:
         print('No new files to download from SFTP. Stopping process.')
         return True
 
-    # # Before we can parse any file we need to set up the tables in the database. 
-    # # If there is already a SQL dump in the S3 bucket we can rebuild from there, 
-    # # otherwise we create the tables fresh.
-    # prep_db(s3, db, priv_dir)
-
     # If there are new files, download them.
-    sftp = Sftp(**sftp_args) # Refresh connection since prep_db sometimes takes a while and socket will close
     print('Downloading new files from SFTP:')
     for f in new_sftp_zip_files:
         print('-', f)
         sftp.download_files(f, priv_dir)
 
-    # For each of the new data files, parse it into the database
-    local_zip_files = [os.path.join(priv_dir, f) for f in new_sftp_zip_files]
+    # Sort zipfiles by date 
+    def sort_by_date(file):
+        r = re.search(r'(\d+.+)\.zip', file).group(0).replace('.',' ')
+        return r
+    local_zip_files = sorted([os.path.join(priv_dir, f) for f in os.listdir(priv_dir) if f.endswith('.zip')], key = sort_by_date)
 
-    # # For debugging only
-    # # ---
-    # # When sql dump fails, grab zips from s3 backup
-    # aws_id = s3_args['aws_id']
-    # aws_key = s3_args['aws_key']
-    # aws_bucket_name = 'oca-level2-data'
-    # backup_s3 = S3(aws_id, aws_key, aws_bucket_name)
-    # for f in backup_s3.list_files('.+\.zip', S3_PRIVATE_FOLDER):
-    #     backup_s3.download_file(f"{S3_PRIVATE_FOLDER}/{f}", os.path.join(priv_dir, f))
-    # def sort_by_date(file):
-    #     r = re.search(r'(\d+.+)\.zip', file).group(0).replace('.',' ')
-    #     return r
-    # local_zip_files = sorted([os.path.join(priv_dir, f) for f in os.listdir(priv_dir)], key = sort_by_date)
-    # # ---
-
-    # For each zipfile, rebuild the staging tables, unzip the XML file and 
-    # parse it into the staging tables, then insert all the newly parsed records 
-    # into the main tables.
+    # Rebuild the staging tables
+    # Then for each zipfile, unzip the XML file and 
+    # parse it into the staging tables
+    print('  - Creating staging tables...')
+    staging_db.execute_sql_file('lib/sql/create_tables_staging_duckdb.sql')
     print('Processing files:')
-    for zip_file in local_zip_files:
+    for zip_file in local_zip_files[30:]:
         print('-', os.path.basename(zip_file))
-
-        print('  - Creating staging tables...')
-        staging_db.execute_sql_file('create_tables.sql')
-        staging_db.execute_sql_file('create_tables_staging.sql')
-        # grab oca_metadata from s3 and import to staging_db (todo rework on oca_metadata table is parsed)
-        csv_filepath = os.path.join(pub_dir, f"oca_metadata.csv")
-        db.export_csv('oca_metadata', csv_filepath)
-        staging_db.import_csv('oca_metadata', csv_filepath)
-        os.remove(csv_filepath) # clean up
-
         print('  - Parsing XML file...')
         extract_date = None
         with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
             for _, elem in etree.iterparse(xml_file, tag=oca_tag('RunDate')):
-                # Grab the first date and break. 
-                # todo - find the RunDate using regex? or something that does not use that much memory
-                # https://stackoverflow.com/questions/7697710/python-running-out-of-memory-parsing-xml-using-celementtree-iterparse
+                # Grab the first date and break 
                 if not extract_date:
                     extract_date = elem.text
                     break
@@ -287,52 +260,91 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
             parse_file(xml_file, staging_db, extract_date)
 
-        # reset staging tables
-        db.execute_sql_file('create_tables_staging.sql')
-        # reset metadata table (todo rework on oca_metadata table is parsed)
-        db.sql("""
-            DROP TABLE IF EXISTS oca_metadata CASCADE;
-            CREATE TABLE IF NOT EXISTS oca_metadata (
-                indexnumberid text PRIMARY KEY,
-                initialdate date,
-                updatedate date,
-                deletedate date
+    # export staging tables to the pub_dir, upload to s3, and then rds
+    staging_db.export_tables_to_csv(output_dir=pub_dir)
+
+    def preprocess_csvs(pub_dir):
+        """Convert all CSV files from DuckDB to PostgreSQL array format; and make small corrections (todo fix this in the parser/ duckdb export)"""
+        for filename in os.listdir(pub_dir):
+            if filename.endswith('.csv'):
+                file_path = os.path.join(pub_dir, filename)
+                df = pd.read_csv(file_path)
+                for col in df.columns:
+                    if df[col].dtype == 'object':
+                        # Convert arrays: [anything] -> {anything}
+                        # But only if the content doesn't contain JSON objects
+                        def replace_brackets(text):
+                            if pd.isna(text) or not isinstance(text, str):
+                                return text
+
+                            if text.startswith('[') and text.endswith(']'):
+                                inner_content = text[1:-1].strip()
+                                # Don't replace if the inner content is wrapped in {}
+                                # Todo: fix appearanceoutcomes that are blank [] ... they are still converted to {}
+                                if inner_content.startswith('{') and inner_content.endswith('}'):
+                                    return text  # Keep original - it's [{}] format
+                                else:
+                                    return '{' + text[1:-1] + '}'  # Convert [] to {}
+                            
+                            return text
+                        
+                        df[col] = df[col].apply(replace_brackets)
+
+                if filename.startswith('oca_appearances'):
+                    # remove the appearanceid column, BIGSERIAL is assigned in postgres
+                    if 'appearanceid' in df.columns: del df['appearanceid']
+                    # change motionsequence to a int instead of a float
+                    df['motionsequence'] = df['motionsequence'].astype('Int64')
+
+                if filename.startswith('oca_judgments'):
+                    df['amendedfromjudgmentsequence'] = df['amendedfromjudgmentsequence'].astype('Int64')
+
+                if filename.startswith('oca_warrants'):
+                    df['executionstayeddays'] = df['executionstayeddays'].astype('Int64')
+                    df['issuancestayeddays'] = df['issuancestayeddays'].astype('Int64')
+
+                df.to_csv(file_path, index=False)
+    
+    print('Convert csvs:')
+    preprocess_csvs(pub_dir)
+    staging_tables = [t + '_staging' for t in OCA_TABLES]
+    public_files = [i for i in os.listdir(pub_dir) if i.endswith('.csv')]
+    with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
+        files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args)) 
+        pool.starmap(upload_public_file, files_zip)
+
+    # reset staging tables then import from s3 to rds
+    db.execute_sql_file('create_tables_staging.sql')
+    for t in staging_tables:
+        print('-', f"{t} table to db")
+        # only import to the rds, if the local csv has rows
+        csv_filepath = os.path.join(pub_dir, f"{t}.csv")
+        if len(pd.read_csv(csv_filepath)):
+            columns = ''
+            # ignore the appearanceid column
+            if t == 'oca_appearances_staging': 
+                columns = 'indexnumberid, appearancedatetime, appearancepurpose, appearancereason, appearancepart, motionsequence, appearanceoutcomes'
+            db.sql(f"""
+                SELECT aws_s3.table_import_from_s3(
+                '{t}', '{columns}', '(FORMAT CSV, HEADER)',
+                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/{t}.csv', 'us-east-1'),
+                aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
             );
-               
-               CREATE INDEX ON oca_metadata (indexnumberid);
+            """)
 
-        """) 
+    # expand appearance_outcomes from json
+    print('\n   - Updating appearance outcomes...')
+    db.execute_sql_file('update_appearance_outcomes.sql')
+    
+    print('\n   - Inserting from staging to main ...')
+    # moves records from staging tables to the main tables, skips oca_metadata
+    insert_staging_to_main(db, OCA_TABLES) 
 
-        # # export staging tables, upload to s3, and then rds
-        staging_tables = [t + '_staging' for t in OCA_TABLES] + ['oca_metadata']
-        staging_tables.remove('oca_metadata_staging')
-        for t in staging_tables:
-            csv_filepath = os.path.join(pub_dir, f"{t}.csv")
-            staging_db.export_csv(t, csv_filepath)
-        public_files = os.listdir(pub_dir)
-        with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
-            files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args)) 
-            pool.starmap(upload_public_file, files_zip) 
-        
-        for t in staging_tables:
-            print('-', f"{t} table to db")
-            # only upload if csv has rows
-            csv_filepath = os.path.join(pub_dir, f"{t}.csv")
-            if len(pd.read_csv(csv_filepath)): # todo - rewrite not to use pandas (csv? or just read file lines using unix)
-                db.sql(f"""
-                    SELECT aws_s3.table_import_from_s3(
-                    '{t}', '', '(FORMAT CSV, HEADER)',
-                    aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/{t}.csv', 'us-east-1'),
-                    aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
-                );
-                """)
+    # Merging in oca_metadata using case if logic 
+    print('\n   - Update metadata in main ...')
+    db.execute_sql_file('update_metadata.sql')
 
-        print('\n   - Updating appearance outcomes...')
-        db.execute_sql_file('update_appearance_outcomes.sql')
-
-        print('  - Inserting from staging to main...')
-        insert_staging_to_main(db)
-
+    
     # Export the rds tables to csv files directly into the s3 bucket
     for t in OCA_TABLES:
         print('-', f'{t} table from db to s3')
@@ -392,10 +404,10 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     df_2 = it[(((pd.isna(it['lat'])) | (it['lat'] == '')))].copy().reset_index()
     print(f'Geocoding {len(df_2)} entries in {output_csv} using another geocoder. {datetime.now()}')
 
-    # # For debugging only
-    # # ---
-    # # data_split = np.split(df_2, range(chunk_size, df_2.shape[0], 10000))
-    # # geocode_using_census_batch(data_split[2], pub_dir)
+    # For debugging only
+    # ---
+    # data_split = np.split(df_2, range(chunk_size, df_2.shape[0], 10000))
+    # geocode_using_census_batch(data_split[2], pub_dir)
 
     with multiprocessing.Pool(processes=min([5, multiprocessing.cpu_count()])) as pool:
         chunk_size = 2500 # census batch limit is 10,000. Smaller batches tend to work better
@@ -417,14 +429,15 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     pd.DataFrame(concat).to_csv(output_csv, index=False)
     del concat
 
-    # reset connection to s3
-    s3 = S3(**s3_args)
+    # # reset connection to s3
+    # s3 = S3(**s3_args)
 
     # Update "last updated date" files on S3 for the latest file processed
     create_date_files(s3, new_sftp_zip_files[-1], pub_dir)
 
     print('Uploading public files to S3:')
-    public_files = os.listdir(pub_dir)
+    public_files = [i for i in os.listdir(pub_dir) 
+                    if i in ('last-updated-shield.png', 'last-updated-date.txt', 'oca_addresses_private.csv')]
     with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
         files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args)) 
         pool.starmap(upload_public_file, files_zip) 
@@ -436,8 +449,9 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     # Upload raw data files and database dump to private folder in S3 bucket
     print('Uploading private files to S3:')
     for f in os.listdir(priv_dir):
-        print('-', f)
-        s3.upload_file(f"{S3_PRIVATE_FOLDER}/{f}", os.path.join(priv_dir, f))
+        if f != '.DS_Store': 
+            print('-', f)
+            s3.upload_file(f"{S3_PRIVATE_FOLDER}/{f}", os.path.join(priv_dir, f))
 
     # reset oca_addresses (removes geom), and uses the geocoded s3 import to overwrite oca_addresses table
     print('-', f'overwrite oca_addresses with geocoded version')

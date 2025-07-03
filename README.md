@@ -61,7 +61,17 @@ Take a look at the `.env` file and fill in the AWS S3 credentials.
 To run the whole process in the docker container run:
 
 ```
-docker-compose run app
+docker-compose up 
+```
+
+### Jupyter notebook for maintenance
+
+Comment out `CMD ["python", "oca_update.py"]` in the Dockerfile
+
+```
+docker-compose up -d
+docker-compose exec app /bin/bash
+jupyter notebook --allow-root --ip 0.0.0.0 --no-browser
 ```
 
 ### General rules for setting up a S3 Bucket
