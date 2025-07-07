@@ -171,7 +171,7 @@ def download_pluto(output_dir):
     #download and unzip
     response = requests.get(PLUTO_CSV_URL)
     content = response.content
-    z = zipfile.ZipFile(io.BytesIO(response.content))
+    z = zipfile.ZipFile(io.BytesIO(content))
 
     pluto_csv = [name for name in z.namelist() if '.csv' in name][0]
     z.extract(pluto_csv, output_dir)
@@ -212,11 +212,12 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     sftp = Sftp(**sftp_args)
     s3 = S3(**s3_args)
     
-    # # For debugging only -- does not clear the folders like the make_dir function
-    # priv_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data-private'))
-    # pub_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data-public'))
+
 
     # Create local versions of folder in the S3 bucket "oca-data"
+    # # For debugging only -- replace with the var declarations below
+    # priv_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data-private'))
+    # pub_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data-public'))
     priv_dir = make_dir('data-private') # "private/"
     pub_dir = make_dir('data-public') # "public/"
     
@@ -246,9 +247,10 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     print('  - Creating staging tables...')
     staging_db.execute_sql_file('lib/sql/create_tables_staging_duckdb.sql')
     print('Processing files:')
-    for zip_file in local_zip_files[30:]:
+    for zip_file in local_zip_files:
         print('-', os.path.basename(zip_file))
-        print('  - Parsing XML file...')
+        print('  - Parsing XML file...') 
+        # takes about 4-5 minutes per xml
         extract_date = None
         with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
             for _, elem in etree.iterparse(xml_file, tag=oca_tag('RunDate')):
@@ -393,6 +395,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
 
     # Geocode records using NYC GeoSupport
     # TODO - check if pluto in the database matches the pluto version of the geosupport
+    # TODO - adjust geocode to put lat/lng on the lot centroid? instead of the centerline/sidewalk
     with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
         it = pd.DataFrame(pool.map(functools.partial(geocode_record, addr_cols=addr_cols), records, 10000))
 
@@ -462,36 +465,36 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/oca_addresses_private.csv', 'us-east-1'),
         aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
     );
-    """)
+    """) # TODO: replace with similar sql query as update_metadata.sql to reduce the time this takes (10 mins)
 
-    # setup pluto if it does not exist
-    # # TODO: setup census tracts if it does not exist 
-    if not db.sql_fetch_one(
-        "SELECT * FROM information_schema.tables WHERE table_name = 'pluto'"):
-        pluto_file = download_pluto(pub_dir)
+    # # setup pluto if it does not exist
+    # # # TODO: setup census tracts if it does not exist 
+    # if not db.sql_fetch_one(
+    #     "SELECT * FROM information_schema.tables WHERE table_name = 'pluto'"):
+    #     pluto_file = download_pluto(pub_dir)
         
 
-        print('uploading pluto to s3')
-        s3.upload_file(f"{S3_PUBLIC_FOLDER}/pluto.csv", pluto_file)
+    #     print('uploading pluto to s3')
+    #     s3.upload_file(f"{S3_PUBLIC_FOLDER}/pluto.csv", pluto_file)
 
-        print('importing pluto to db')
-        db.execute_sql_file('create_pluto_table.sql')
+    #     print('importing pluto to db')
+    #     db.execute_sql_file('create_pluto_table.sql')
                 
-        db.sql(f"""
-            SELECT aws_s3.table_import_from_s3(
-            'pluto', '', '(FORMAT CSV, HEADER)',
-            aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/pluto_24v2.csv', 'us-east-1'),
-            aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
-        );
-        """)
+    #     db.sql(f"""
+    #         SELECT aws_s3.table_import_from_s3(
+    #         'pluto', '', '(FORMAT CSV, HEADER)',
+    #         aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/pluto_24v2.csv', 'us-east-1'),
+    #         aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
+    #     );
+    #     """)
    
-        db.execute_sql_file('alter_pluto_table.sql')
+    #     db.execute_sql_file('alter_pluto_table.sql')
 
    
     # create views and grant access to folks
     db.execute_sql_file('create_addresses_views.sql')
 
-    # export views directly to s3
+    # export views directly to s3, each takes 1-2 minutes
     print(f"Creating oca_addresses_with_bbl and exporting to S3")
     db.sql(f"""
             SELECT * from aws_s3.query_export_to_s3(

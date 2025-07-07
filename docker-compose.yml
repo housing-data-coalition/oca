@@ -11,6 +11,6 @@ services:
     # > docker compose exec app /bin/bash
     # lastly run jupyter using > uv pip install notebook and 
     # > jupyter notebook --allow-root --ip 0.0.0.0 --no-browser
-    ports:
-      - 8888:8888
+    # ports:
+    #   - 8888:8888
     tty: true

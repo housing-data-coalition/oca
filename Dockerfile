@@ -51,4 +51,4 @@ ENV LD_LIBRARY_PATH=/geosupport/current_version/lib/
 RUN mkdir -p ~/.ssh && chmod 0700 ~/.ssh 
 
 WORKDIR /app
-# CMD ["python", "oca_update.py"]
+CMD ["python", "oca_update.py"]

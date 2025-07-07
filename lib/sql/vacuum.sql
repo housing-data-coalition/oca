@@ -1,7 +1,7 @@
 -- run occasionally
 REINDEX SCHEMA public;
 
-VACUUM ANALYZE oca_index;
+VACUUM FULL ANALYZE oca_index;
 VACUUM ANALYZE oca_causes;
 VACUUM ANALYZE oca_addresses;
 VACUUM ANALYZE oca_parties;
