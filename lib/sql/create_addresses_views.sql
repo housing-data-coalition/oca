@@ -1,6 +1,17 @@
 -- CREATE EXTENSION IF NOT EXISTS postgis;
 -- CREATE EXTENSION IF NOT EXISTS aws_s3 CASCADE;
 
+-- Drop all related views
+DROP VIEW IF EXISTS public.oca_addresses_with_bbl;
+DROP VIEW IF EXISTS public.oca_addresses_with_ct;
+DROP VIEW IF EXISTS public.oca_addresses_public;
+
+-- Drop geom column if it exists
+ALTER TABLE oca_addresses 
+DROP COLUMN IF EXISTS geom;
+DROP INDEX IF EXISTS oca_addresses_geom_idx;
+
+-- Recreate views
 CREATE OR REPLACE VIEW public.oca_addresses_with_bbl AS
 	SELECT 
 		indexnumberid,
@@ -30,12 +41,11 @@ CREATE OR REPLACE VIEW public.oca_addresses_with_bbl AS
 	LEFT JOIN pluto p ON LEFT(p.bbl, 10) = o.bbl;
 
 -- update oca_addresses with geom field
-ALTER TABLE oca_addresses 
+ALTER TABLE oca_addresses
   ADD COLUMN geom Geometry(Point, 4326);
 
 UPDATE oca_addresses 
- SET geom = ST_SetSRID(ST_Point( lon, lat),4326);
-DROP INDEX IF EXISTS oca_addresses_geom_idx;
+ SET geom = ST_SetSRID(ST_Point(lon, lat),4326);
 
 CREATE INDEX oca_addresses_geom_idx
   ON oca_addresses
@@ -65,5 +75,4 @@ AS SELECT
 GRANT ALL ON ALL TABLES IN SCHEMA public TO jacob;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO lucy;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO maxwell;
-
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO select_only;

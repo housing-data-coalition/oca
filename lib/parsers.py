@@ -1,41 +1,33 @@
 import frogress
 from lxml import etree
+import threading
+import queue
 
-def drop_case_rows(case, db):
-    """ 
-    Remove a single case from all the main tables in the database 
-    (all other main tables reference the id in the oca_index table 
-    and the deletion cascades to those tables)
+NAMESPACE = '{http://www.example.org/LandlordTenantExtractSchema}'
 
-    :param case: an lxml.etree element for a case index
-    :param db: a Database object
-    """
-    case_id = case.find(oca_tag('IndexNumberId')).text
-    db.sql(f"DELETE FROM oca_index WHERE indexnumberid = '{case_id}';")
-
-
-def is_case_to_delete(case):
-    """ Determine if a case should from the database
-
-    :param case: an lxml.etree element for a case index
-    :return: boolean
-    """
-    return case.find(oca_tag('Delete')) is not None
-
-
-# when refering to XML tags we need to have the "namespace" included as well
 def oca_tag(tag):
     """ add the necessary namespace to an xml tag
 
     :param tag: an xml tag string
     :return: string for tag with namespace
     """
-    return '{http://www.example.org/LandlordTenantExtractSchema}' + tag
+    return NAMESPACE + tag
+
+INDEX_NUMBER_ID_TAG = oca_tag('IndexNumberId')
+DELETE_TAG = oca_tag('Delete')
 
 
-# if there is no element to find calling text method raises error
+def is_case_to_delete(case):
+    """ Determine if a case should be deleted from the database
+
+    :param case: an lxml.etree element for a case index
+    :return: boolean
+    """
+    return case.find(DELETE_TAG) is not None
+
+
 def oca_extract(elem, tag):
-    """ find the first occurance of an xml tag and extract the
+    """ find the first occurance of an xml tag and extract the tag value
 
     :param elem: an lxml.etree element
     :param tag: an xml tag to find
@@ -45,41 +37,44 @@ def oca_extract(elem, tag):
     return None if x is None else x.text
 
 
-# some attributes can have multiple values that we want to keep on in the same table/row,
-# so we format these for insertion into postgres array. These are either 1 or 2 levels deep.
-
 def oca_extract_array1(elem, parent_tag, child_tag):
     """ find the first node for given parent tag then extract the text 
-    for all children matching the child tag as a postgres array string
+    for all children matching the child tag as a Python list
 
     :param elem: an lxml.etree element
     :param parent_tag: an xml tag for the parent node
     :param child_tag: an xml tag for the children nodes
-    :return: postgres array string (eg. {foo, bar}) or None
+    :return: Python list or None
     """
     parent_elem = elem.find(oca_tag(parent_tag))
 
     if parent_elem is not None:
-       return "{" + ','.join([ i.text for i in parent_elem.findall(oca_tag(child_tag)) ]) + "}"
+        values = [i.text for i in parent_elem.findall(oca_tag(child_tag)) if i.text is not None]
+        return values if values else None
     else:
         return None
 
 
 def oca_extract_array2(elem, grandparent_tag, parent_tag, child_tag):
-    """ find the first node for given gandparent tag then extract all 
+    """ find the first node for given grandparent tag then extract all 
     the parent nodes and for each parent node extract the text for its 
-    child as a postgres array string
+    child as a Python list
 
     :param elem: an lxml.etree element
-    :param gandparent_tag: an xml tag for the grandparent node
+    :param grandparent_tag: an xml tag for the grandparent node
     :param parent_tag: an xml tag for the parent nodes
     :param child_tag: an xml tag for the child node
-    :return: postgres array string (eg. {foo, bar}) or None
+    :return: Python list or None
     """
     grandparent_elem = elem.find(oca_tag(grandparent_tag))
 
     if grandparent_elem is not None:
-       return '{' + ','.join([ i.find(oca_tag(child_tag)).text for i in grandparent_elem.findall(oca_tag(parent_tag)) ]) + '}'
+        values = []
+        for parent in grandparent_elem.findall(oca_tag(parent_tag)):
+            child_elem = parent.find(oca_tag(child_tag))
+            if child_elem is not None and child_elem.text is not None:
+                values.append(child_elem.text)
+        return values if values else None
     else:
         return None
 
@@ -89,11 +84,11 @@ def parse_index(case, db):
     table and load the values into the database table
 
     :param case: an lxml.etree element for a case index
-    :param db: a Database object
+    :param db: a DuckDB object
     """
-    IndexNumberId = case.find(oca_tag('IndexNumberId')).text
+    IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
 
-    row = [{
+    row = {
         'indexnumberid' : IndexNumberId,
         'court' : oca_extract(case, 'Court'),
         'fileddate' : oca_extract(case, 'FiledDate'),
@@ -106,9 +101,13 @@ def parse_index(case, db):
         'firstpaper' : oca_extract(case, 'FirstPaper'),
         'primaryclaimtotal' : oca_extract(case, 'PrimaryClaimTotal'),
         'dateofjurydemand' : oca_extract(case, 'DateOfJuryDemand'),
-    }]
+    }
 
-    db.insert_rows(row, 'oca_index_staging')
+    columns = list(row.keys())
+    values = tuple(row.get(col) for col in columns)
+    placeholders = ', '.join(['?' for _ in columns])
+    insert_sql = f"INSERT OR REPLACE INTO oca_index_staging ({', '.join(columns)}) VALUES ({placeholders})"
+    db.execute(insert_sql, values)
 
 
 def parse_causes(case, db):
@@ -116,26 +115,30 @@ def parse_causes(case, db):
     table and load the values into the database table
 
     :param case: an lxml.etree element for a case index
-    :param db: a Database object
+    :param db: a DuckDB object
     """
-    IndexNumberId = case.find(oca_tag('IndexNumberId')).text
+    IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
+
+    # Eelete existing records for this case to handle multiple causes
+    db.execute("DELETE FROM oca_causes_staging WHERE indexnumberid = ?", (IndexNumberId,))
 
     causes = case.find(oca_tag('PrimaryClaimCauseOfActions'))
 
     if causes is None:
         return None
 
-    rows = []
     for cause in causes.iter(oca_tag('PrimaryClaimCauseOfAction')):
-        rows.append({
+        row = {
             'indexnumberid' : IndexNumberId,
             'causeofactiontype' : oca_extract(cause, 'CauseOfActionType'),
             'interestfromdate' : oca_extract(cause, 'InterestFromDate'),
             'amount' : oca_extract(cause, 'Amount'),
-        })
-
-    if rows:
-        db.insert_rows(rows, 'oca_causes_staging')
+        }
+        columns = list(row.keys())
+        values = tuple(row.get(col) for col in columns)
+        placeholders = ', '.join(['?' for _ in columns])
+        insert_sql = f"INSERT INTO oca_causes_staging ({', '.join(columns)}) VALUES ({placeholders})"
+        db.execute(insert_sql, values)
 
 
 def parse_addresses(case, db):
@@ -143,29 +146,32 @@ def parse_addresses(case, db):
     table and load the values into the database table
 
     :param case: an lxml.etree element for a case index
-    :param db: a Database object
+    :param db: a DuckDB object
     """
-    IndexNumberId = case.find(oca_tag('IndexNumberId')).text
+    IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
+
+    # First, delete existing records for this case to handle multiple addresses
+    db.execute("DELETE FROM oca_addresses_staging WHERE indexnumberid = ?", (IndexNumberId,))
 
     addresses = case.find(oca_tag('PropertyAddresses'))
 
     if addresses is None:
         return None
 
-    rows = []
     for address in addresses.iter(oca_tag('PropertyAddress')):
-
-        rows.append({
+        row = {
             'indexnumberid' : IndexNumberId,
             'street1' : oca_extract(address, 'Street1'),
             'street2' : oca_extract(address, 'Street2'),
             'city' : oca_extract(address, 'City'),
             'state' : oca_extract(address, 'State'),
             'postalcode' : oca_extract(address, 'PostalCode'),
-        })
-        
-    if rows:
-        db.insert_rows(rows, 'oca_addresses_staging')
+        }
+        columns = list(row.keys())
+        values = tuple(row.get(col) for col in columns)
+        placeholders = ', '.join(['?' for _ in columns])
+        insert_sql = f"INSERT INTO oca_addresses_staging ({', '.join(columns)}) VALUES ({placeholders})"
+        db.execute(insert_sql, values)
 
 
 def parse_parties(case, db):
@@ -173,28 +179,31 @@ def parse_parties(case, db):
     table and load the values into the database table
 
     :param case: an lxml.etree element for a case index
-    :param db: a Database object
+    :param db: a DuckDB object
     """
-    IndexNumberId = case.find(oca_tag('IndexNumberId')).text
+    IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
+
+    # First, delete existing records for this case to handle multiple parties
+    db.execute("DELETE FROM oca_parties_staging WHERE indexnumberid = ?", (IndexNumberId,))
 
     parties = case.find(oca_tag('Parties'))
 
     if parties is None:
         return None
 
-    rows = []
     for party in parties.iter(oca_tag('Party')):
-
-        rows.append({
+        row = {
             'indexnumberid' : IndexNumberId,
             'role' : oca_extract(party, 'Role'),
             'partytype' : oca_extract(party, 'PartyType'),
             'representationtype' : oca_extract(party, 'RepresentationType'),
             'undertenant' : oca_extract(party, 'Undertenant'),
-        })
-
-    if rows:
-        db.insert_rows(rows, 'oca_parties_staging')
+        }
+        columns = list(row.keys())
+        values = tuple(row.get(col) for col in columns)
+        placeholders = ', '.join(['?' for _ in columns])
+        insert_sql = f"INSERT INTO oca_parties_staging ({', '.join(columns)}) VALUES ({placeholders})"
+        db.execute(insert_sql, values)
 
 
 def parse_events(case, db):
@@ -202,36 +211,49 @@ def parse_events(case, db):
     table and load the values into the database table
 
     :param case: an lxml.etree element for a case index
-    :param db: a Database object
+    :param db: a DuckDB object
     """
-    IndexNumberId = case.find(oca_tag('IndexNumberId')).text
+    IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
+
+    # First, delete existing records for this case to handle multiple events
+    db.execute("DELETE FROM oca_events_staging WHERE indexnumberid = ?", (IndexNumberId,))
 
     events = case.find(oca_tag('Events'))
 
     if events is None:
         return None
 
-    rows = []
     for event in events.iter(oca_tag('Event')):
-
-        rows.append({
+        row = {
             'indexnumberid' : IndexNumberId,
             'eventname' : oca_extract(event, 'EventName'),
             'fileddate' : oca_extract(event, 'FiledDate'),
             'feetype' : oca_extract(event, 'FeeType'),
             'filingpartiesroles' : oca_extract_array2(event, 'FilingParties', 'FilingParty', 'Role'),
             'answertype' : oca_extract(event, 'AnswerType'),
-        })
+        }
+        columns = list(row.keys())
+        values = tuple(row.get(col) for col in columns)
+        placeholders = ', '.join(['?' for _ in columns])
+        insert_sql = f"INSERT INTO oca_events_staging ({', '.join(columns)}) VALUES ({placeholders})"
+        db.execute(insert_sql, values)
 
-    if rows:
-        db.insert_rows(rows, 'oca_events_staging')
 
-
-def appearance_outcome_to_json(elem):
-    appearanceoutcometype_val = '"' + elem.find(oca_tag('AppearanceOutcomeType')).text + '"'
-    outcomebasedontype_val = '"' + elem.find(oca_tag('OutcomeBasedOnType')).text + '"' if elem.find(oca_tag('OutcomeBasedOnType')) is not None else 'null'
-
-    return f"{{\"appearanceoutcometype\":{appearanceoutcometype_val},\"outcomebasedontype\":{outcomebasedontype_val}}}"    
+def appearance_outcome_to_dict(elem):
+    """Convert appearance outcome element to dictionary"""
+    outcome_dict = {}
+    
+    outcome_type_elem = elem.find(oca_tag('AppearanceOutcomeType'))
+    if outcome_type_elem is not None:
+        outcome_dict['appearanceoutcometype'] = outcome_type_elem.text
+    
+    based_on_elem = elem.find(oca_tag('OutcomeBasedOnType'))
+    if based_on_elem is not None:
+        outcome_dict['outcomebasedontype'] = based_on_elem.text
+    else:
+        outcome_dict['outcomebasedontype'] = None
+    
+    return outcome_dict
 
 
 def parse_appearances(case, db):
@@ -239,27 +261,30 @@ def parse_appearances(case, db):
     table and load the values into the database table
 
     :param case: an lxml.etree element for a case index
-    :param db: a Database object
+    :param db: a DuckDB object
     """
 
-    IndexNumberId = case.find(oca_tag('IndexNumberId')).text
+    IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
+
+    # First, delete existing records for this case to handle multiple appearances
+    db.execute("DELETE FROM oca_appearances_staging WHERE indexnumberid = ?", (IndexNumberId,))
 
     appearances = case.find(oca_tag('Appearances'))
 
     if appearances is None:
         return None
 
-    rows = []
     for appearance in appearances.iter(oca_tag('Appearance')):
 
         appearance_outcomes = appearance.find(oca_tag('AppearanceOutcomes'))        
 
         if appearance_outcomes is not None:
-            AppearanceOutcomes = '[' + ','.join([ appearance_outcome_to_json(i) for i in appearance_outcomes.iter(oca_tag('AppearanceOutcome')) ]) + ']'
+            # Return as a list of dictionaries
+            AppearanceOutcomes = [appearance_outcome_to_dict(i) for i in appearance_outcomes.iter(oca_tag('AppearanceOutcome'))]
         else:
-            AppearanceOutcomes = '[]'
+            AppearanceOutcomes = []
 
-        rows.append({
+        row = {
             'indexnumberid' : IndexNumberId,
             'appearancedatetime' : oca_extract(appearance, 'AppearanceDateTime'),
             'appearancepurpose' : oca_extract(appearance, 'AppearancePurpose'),
@@ -267,10 +292,12 @@ def parse_appearances(case, db):
             'appearancepart' : oca_extract(appearance, 'AppearancePart'),
             'motionsequence' : oca_extract(appearance, 'MotionSequence'),
             'appearanceoutcomes' : AppearanceOutcomes,
-        })
-
-    if rows:
-        db.insert_rows(rows, 'oca_appearances_staging')
+        }
+        columns = list(row.keys())
+        values = tuple(row.get(col) for col in columns)
+        placeholders = ', '.join(['?' for _ in columns])
+        insert_sql = f"INSERT INTO oca_appearances_staging ({', '.join(columns)}) VALUES ({placeholders})"
+        db.execute(insert_sql, values)
 
 
 def parse_motions(case, db):
@@ -278,19 +305,20 @@ def parse_motions(case, db):
     table and load the values into the database table
 
     :param case: an lxml.etree element for a case index
-    :param db: a Database object
+    :param db: a DuckDB object
     """
-    IndexNumberId = case.find(oca_tag('IndexNumberId')).text
+    IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
+
+    # First, delete existing records for this case to handle multiple motions
+    db.execute("DELETE FROM oca_motions_staging WHERE indexnumberid = ?", (IndexNumberId,))
 
     motions = case.find(oca_tag('Motions'))
 
     if motions is None:
         return None
 
-    rows = []
     for motion in motions.iter(oca_tag('Motion')):
-
-        rows.append({
+        row = {
             'indexnumberid' : IndexNumberId,
             'sequence' : oca_extract(motion, 'Sequence'),
             'motiontype' : oca_extract(motion, 'MotionType'),
@@ -299,10 +327,12 @@ def parse_motions(case, db):
             'filingpartiesroles' : oca_extract_array2(motion, 'FilingParties', 'FilingParty', 'Role'),
             'motiondecision' : oca_extract(motion, 'MotionDecision'),
             'motiondecisiondate' : oca_extract(motion, 'MotionDecisionDate'),
-        })
-
-    if rows:
-        db.insert_rows(rows, 'oca_motions_staging')
+        }
+        columns = list(row.keys())
+        values = tuple(row.get(col) for col in columns)
+        placeholders = ', '.join(['?' for _ in columns])
+        insert_sql = f"INSERT INTO oca_motions_staging ({', '.join(columns)}) VALUES ({placeholders})"
+        db.execute(insert_sql, values)
 
 
 def parse_decisions(case, db):
@@ -310,30 +340,34 @@ def parse_decisions(case, db):
     table and load the values into the database table
 
     :param case: an lxml.etree element for a case index
-    :param db: a Database object
+    :param db: a DuckDB object
     """
 
     # TODO: Need to further parse the text of the "Highlight" field, 
     # though it's not clear what is a useful way to structure this.
 
-    IndexNumberId = case.find(oca_tag('IndexNumberId')).text
+    IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
+
+    # First, delete existing records for this case to handle multiple decisions
+    db.execute("DELETE FROM oca_decisions_staging WHERE indexnumberid = ?", (IndexNumberId,))
 
     decisions = case.find(oca_tag('Decisions'))
 
     if decisions is None:
         return None
 
-    rows = []
     for decision in decisions.iter(oca_tag('Decision')):
-        rows.append({
+        row = {
             'indexnumberid' : IndexNumberId,
             'sequence' : oca_extract(decision, 'Sequence'),
             'resultof' : oca_extract(decision, 'ResultOf'),
             'highlight' : oca_extract(decision, 'HighlightNoPersonallyIdentifyingInfo'),
-        })
-
-    if rows:
-        db.insert_rows(rows, 'oca_decisions_staging')
+        }
+        columns = list(row.keys())
+        values = tuple(row.get(col) for col in columns)
+        placeholders = ', '.join(['?' for _ in columns])
+        insert_sql = f"INSERT INTO oca_decisions_staging ({', '.join(columns)}) VALUES ({placeholders})"
+        db.execute(insert_sql, values)
 
 
 def parse_judgments(case, db):
@@ -341,20 +375,21 @@ def parse_judgments(case, db):
     table and load the values into the database table
 
     :param case: an lxml.etree element for a case index
-    :param db: a Database object
+    :param db: a DuckDB object
     """
 
-    IndexNumberId = case.find(oca_tag('IndexNumberId')).text
+    IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
+
+    # First, delete existing records for this case to handle multiple judgments
+    db.execute("DELETE FROM oca_judgments_staging WHERE indexnumberid = ?", (IndexNumberId,))
 
     judgments = case.find(oca_tag('Judgments'))
 
     if judgments is None:
         return None
 
-    rows = []
     for judgment in judgments.iter(oca_tag('Judgment')):
-
-        rows.append({
+        row = {
             'indexnumberid' : IndexNumberId,
             'sequence' : oca_extract(judgment, 'Sequence'),
             'amendedfromjudgmentsequence' : oca_extract(judgment, 'AmendedFromJudgmentSequence'),
@@ -367,10 +402,12 @@ def parse_judgments(case, db):
             'totaljudgmentamount' : oca_extract(judgment, 'TotalJudgmentAmount'),
             'creditorsroles' : oca_extract_array2(judgment, 'Creditors', 'Creditor', 'Role'),
             'debtorsroles' : oca_extract_array2(judgment, 'Debtors', 'Debtor', 'Role'),
-        })
-
-    if rows:
-        db.insert_rows(rows, 'oca_judgments_staging')
+        }
+        columns = list(row.keys())
+        values = tuple(row.get(col) for col in columns)
+        placeholders = ', '.join(['?' for _ in columns])
+        insert_sql = f"INSERT INTO oca_judgments_staging ({', '.join(columns)}) VALUES ({placeholders})"
+        db.execute(insert_sql, values)
 
 
 def parse_warrants(case, db):
@@ -378,10 +415,13 @@ def parse_warrants(case, db):
     table and load the values into the database table
 
     :param case: an lxml.etree element for a case index
-    :param db: a Database object
+    :param db: a DuckDB object
     """
 
-    IndexNumberId = case.find(oca_tag('IndexNumberId')).text
+    IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
+
+    # First, delete existing records for this case to handle multiple warrants
+    db.execute("DELETE FROM oca_warrants_staging WHERE indexnumberid = ?", (IndexNumberId,))
 
     judgments = case.find(oca_tag('Judgments'))
 
@@ -395,12 +435,10 @@ def parse_warrants(case, db):
         warrants = judgment.find(oca_tag('Warrants'))
 
         if warrants is None:
-            return None
+            continue
 
-        rows = []
         for warrant in warrants.iter(oca_tag('Warrant')):
-
-            rows.append({
+            row = {
                 'indexnumberid' : IndexNumberId,
                 'judgmentsequence' : JudgmentSequence,
                 'sequence' : oca_extract(warrant, 'Sequence'),
@@ -426,57 +464,53 @@ def parse_warrants(case, db):
                 'returneddate' : oca_extract(warrant, 'ReturnedDate'),
                 'returnedreason' : oca_extract(warrant, 'ReturnedReason'),
                 'executiondate' : oca_extract(warrant, 'ExecutionDate'),
-            })
-
-        if rows:
-            db.insert_rows(rows, 'oca_warrants_staging')
+            }
+            columns = list(row.keys())
+            values = tuple(row.get(col) for col in columns)
+            placeholders = ', '.join(['?' for _ in columns])
+            insert_sql = f"INSERT INTO oca_warrants_staging ({', '.join(columns)}) VALUES ({placeholders})"
+            db.execute(insert_sql, values)
 
 
 def update_metadata(case, db, extract_date):
     """ for a case update the metadata table with dates
 
     :param case: an lxml.etree element for a case index
-    :param db: a Database object
+    :param db: a DuckDB object
     :param extract_date: date of the XML data extract from OCA
     """
 
-    IndexNumberId = case.find(oca_tag('IndexNumberId')).text
-
+    IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
+    
+    updatedate = extract_date if not is_case_to_delete(case) else None
+    deletedate = extract_date if is_case_to_delete(case) else None
+    
     row = {
-        'indexnumberid' : IndexNumberId,
+        'indexnumberid': IndexNumberId,
         'initialdate': extract_date,
-        'updatedate': extract_date if not is_case_to_delete(case) else None,
-        'deletedate': extract_date if is_case_to_delete(case) else None,
+        'updatedate': updatedate,
+        'deletedate': deletedate
     }
-    sql = """
-    INSERT INTO oca_metadata AS m (indexnumberid, initialdate, updatedate, deletedate)
-        VALUES (%s, %s, %s, %s)
-    ON CONFLICT (indexnumberid)
-    DO UPDATE SET
-        (updatedate, deletedate) = (COALESCE(EXCLUDED.updatedate, m.updatedate), EXCLUDED.deletedate)
-    """
-    params = (row['indexnumberid'], row['initialdate'], row['updatedate'], row['deletedate'])
-
-    with db.conn.cursor() as curs:
-        curs.execute(sql, params)
-        db.conn.commit()
+    
+    columns = list(row.keys())
+    values = tuple(row.get(col) for col in columns)
+    placeholders = ', '.join(['?' for _ in columns])
+    insert_sql = f"INSERT OR REPLACE INTO oca_metadata_staging ({', '.join(columns)}) VALUES ({placeholders})"
+    db.execute(insert_sql, values)
 
 
 def parse_case(case, db, extract_date):
-    """ for a case, remove it from the database if it already exists, 
-    then determine if it needs to be deleted permanently, if not then 
-    parse all the values and insert the values into all the database table
+    """ Parse a single case
 
     :param case: an lxml.etree element for a case index
-    :param db: a Database object
+    :param db: a DuckDB object
+    :param extract_date: date of extract
     """
-
+    
     update_metadata(case, db, extract_date)
 
     # If this case is flagged for removal, skip the parsing steps
     if is_case_to_delete(case):
-        # Remove the case from all tables if it already exists
-        drop_case_rows(case, db)
         return
 
     parse_index(case, db)
@@ -491,16 +525,90 @@ def parse_case(case, db, extract_date):
     parse_warrants(case, db)
 
 
-def parse_file(xml_file, db, extract_date):
+def _worker_thread(case_queue, db_queue, extract_date, thread_id):
+    """Worker thread that processes cases from the queue"""
+    while True:
+        try:
+            case = case_queue.get(timeout=1)
+            if case is None:  # Sentinel value to stop thread
+                break
+            
+            # Each thread needs its own database connection
+            thread_db = db_queue.get()
+            try:
+                parse_case(case, thread_db, extract_date)
+            except Exception as e:
+                print(f"Thread {thread_id}: Error parsing case: {e}")
+            finally:
+                # Clear the case copy from memory
+                case.clear()
+                db_queue.put(thread_db)  # Return db connection to pool
+                
+        except queue.Empty:
+            continue
+        finally:
+            case_queue.task_done()
 
+
+def parse_file(xml_file, staging_db, extract_date, num_threads=8):
+    """
+    Parse XML file with multiple threads
+    
+    :param xml_file: file-like object or path to XML file
+    :param staging_db: DuckDB database object
+    :param extract_date: date of extract
+    :param num_threads: number of worker threads (increasing this doesn't speed up much, bottleneck is the database writes)
+    """
+    from .duckdb_database import DuckDB
+    
+    # Create queues
+    case_queue = queue.Queue(maxsize=num_threads * 10)
+    db_queue = queue.Queue()
+    
+    # Create database connections for each thread
+    for _ in range(num_threads):
+        thread_db = DuckDB(staging_db.dbname)
+        db_queue.put(thread_db)
+    
+    # Start worker threads
+    threads = []
+    for i in range(num_threads):
+        t = threading.Thread(
+            target=_worker_thread, 
+            args=(case_queue, db_queue, extract_date, i)
+        )
+        t.start()
+        threads.append(t)
+    
+    # Parse XML and feed cases to queue
     context = etree.iterparse(xml_file, tag=oca_tag('Index'))
-
-    for action, case in frogress.bar(context):
-
-        # If case already exists in DB delete it, 
-        # if we have delete instructions don't re-add it, 
-        # otherwise parse the case and insert it into the various tables.
-        parse_case(case, db, extract_date)
-
+    
+    
+    total_cases = 0
+    for _, case in frogress.bar(context):
+        # Make a deep copy since we'll be clearing the original
+        case_copy = etree.fromstring(etree.tostring(case))
+        
+        case_queue.put(case_copy)
+        total_cases += 1
+        
         # Clear the case element to free memory
         case.clear()
+        while case.getprevious() is not None:
+            del case.getparent()[0]
+    
+    # Signal threads to stop
+    for _ in range(num_threads):
+        case_queue.put(None)
+    
+    # Wait for all threads to complete
+    for t in threads:
+        t.join()
+    
+    # Close thread database connections
+    while not db_queue.empty():
+        thread_db = db_queue.get()
+        thread_db.close()
+    
+    print(f"Processed {total_cases} cases with {num_threads} threads")
+

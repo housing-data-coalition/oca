@@ -1,0 +1,93 @@
+app-1  | Downloading new files from SFTP:
+app-1  | - LandlordTenant.Incr.2025-07-06.zip
+app-1  |   - Creating staging tables...
+app-1  | Processing files:
+app-1  | - LandlordTenant.Incr.2025-07-06.zip
+app-1  |   - Parsing XML file...
+[##########] | Progress: 29471 | Time: 4min11s | ETA: --Processed 29471 cases with 8 threads
+app-1  | Exported oca_addresses_staging to /app/lib/data-public/oca_addresses_staging.csv
+app-1  | Exported oca_appearance_outcomes_staging to /app/lib/data-public/oca_appearance_outcomes_staging.csv
+app-1  | Exported oca_appearances_staging to /app/lib/data-public/oca_appearances_staging.csv
+app-1  | Exported oca_causes_staging to /app/lib/data-public/oca_causes_staging.csv
+app-1  | Exported oca_decisions_staging to /app/lib/data-public/oca_decisions_staging.csv
+app-1  | Exported oca_events_staging to /app/lib/data-public/oca_events_staging.csv
+app-1  | Exported oca_index_staging to /app/lib/data-public/oca_index_staging.csv
+app-1  | Exported oca_judgments_staging to /app/lib/data-public/oca_judgments_staging.csv
+app-1  | Exported oca_metadata_staging to /app/lib/data-public/oca_metadata_staging.csv
+app-1  | Exported oca_motions_staging to /app/lib/data-public/oca_motions_staging.csv
+app-1  | Exported oca_parties_staging to /app/lib/data-public/oca_parties_staging.csv
+app-1  | Exported oca_warrants_staging to /app/lib/data-public/oca_warrants_staging.csv
+app-1  | Convert csvs:
+app-1  | - oca_index_staging.csv
+app-1  | - oca_metadata_staging.csv
+app-1  | - oca_events_staging.csv
+app-1  | - oca_judgments_staging.csv
+app-1  | - oca_decisions_staging.csv
+app-1  | - oca_appearance_outcomes_staging.csv
+app-1  | - oca_addresses_staging.csv
+app-1  | - oca_warrants_staging.csv
+app-1  | - oca_parties_staging.csv
+app-1  | - oca_motions_staging.csv
+app-1  | - oca_causes_staging.csv
+app-1  | - oca_appearances_staging.csv
+app-1  | - oca_index_staging table to db
+app-1  | - oca_causes_staging table to db
+app-1  | - oca_addresses_staging table to db
+app-1  | - oca_parties_staging table to db
+app-1  | - oca_events_staging table to db
+app-1  | - oca_appearances_staging table to db
+app-1  | - oca_appearance_outcomes_staging table to db
+app-1  | - oca_motions_staging table to db
+app-1  | - oca_decisions_staging table to db
+app-1  | - oca_judgments_staging table to db
+app-1  | - oca_warrants_staging table to db
+app-1  | - oca_metadata_staging table to db
+app-1  | 
+app-1  |    - Updating appearance outcomes...
+app-1  | 
+app-1  |    - Inserting from staging to main ...
+app-1  |        ...Deleting older entries from oca_index
+app-1  |        ...Deleting older entries from oca_causes
+app-1  |        ...Deleting older entries from oca_addresses
+app-1  |        ...Deleting older entries from oca_parties
+app-1  |        ...Deleting older entries from oca_events
+app-1  |        ...Deleting older entries from oca_appearances
+app-1  |        ...Deleting older entries from oca_appearance_outcomes
+app-1  |        ...Deleting older entries from oca_motions
+app-1  |        ...Deleting older entries from oca_decisions
+app-1  |        ...Deleting older entries from oca_judgments
+app-1  |        ...Deleting older entries from oca_warrants
+app-1  |        ...Inserting to oca_index
+app-1  |        ...Inserting to oca_causes
+app-1  |        ...Inserting to oca_addresses
+app-1  |        ...Inserting to oca_parties
+app-1  |        ...Inserting to oca_events
+app-1  |        ...Inserting to oca_appearances
+app-1  |        ...Inserting to oca_appearance_outcomes
+app-1  |        ...Inserting to oca_motions
+app-1  |        ...Inserting to oca_decisions
+app-1  |        ...Inserting to oca_judgments
+app-1  |        ...Inserting to oca_warrants
+app-1  | 
+app-1  |    - Update metadata in main ...
+app-1  | - oca_index table from db to s3
+
+app-1  | [ERROR] geosupport.geosupport - Geosupport call error: INPUT ZIP CODE IS NOT A NEW YORK CITY ZIP CODE INPUT ZIP CODE IS NOT A NEW YORK CITY ZIP CODE
+
+app-1  | Geocoding 60041 entries in /app/lib/data-public/oca_addresses_private.csv using another geocoder. 2025-07-06 22:34:58.075912
+app-1  | /app/.venv/lib/python3.12/site-packages/numpy/_core/fromnumeric.py:57: FutureWarning: 'DataFrame.swapaxes' is deprecated and will be removed in a future version. Please use 'DataFrame.transpose' instead.
+app-1  |   return bound(*args, **kwds)
+app-1  | /app/lib/etl.py:416: FutureWarning: The behavior of DataFrame concatenation with empty or all-NA entries is deprecated. In a future version, this will no longer exclude empty or all-NA columns when determining the result dtypes. To retain the old behavior, exclude the relevant entries before the concat operation.
+app-1  |   data_split = zip(np.split(df_2, range(chunk_size, df_2.shape[0], chunk_size)), repeat(pub_dir))
+app-1  | Done geocoding. 2025-07-06 22:35:43.126331
+
+app-1  | Uploading public files to S3:
+app-1  | - last-updated-date.txt
+app-1  | - last-updated-shield.png
+app-1  | - oca_addresses_private.csv
+
+app-1  | Uploading private files to S3:
+app-1  | - LandlordTenant.Incr.2025-07-06.zip
+app-1  | Creating oca_addresses_with_bbl and exporting to S3
+app-1  | Creating oca_addresses_with_ct and exporting to S3
+app-1  | Creating oca_addresses_public and exporting to S3
