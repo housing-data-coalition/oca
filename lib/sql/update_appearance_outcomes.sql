@@ -1,3 +1,22 @@
+-- update appearanceid so that the serial resumes from the latest number in the main table
+DO $$
+DECLARE
+    max_id bigint;
+    offset_val bigint;
+BEGIN
+    SELECT COALESCE(MAX(appearanceid), 0) INTO max_id FROM oca_appearances;
+    
+    -- Update all existing rows to continue from max_id
+    UPDATE oca_appearances_staging 
+    SET appearanceid = appearanceid + max_id;
+    
+    -- Set sequence for any future inserts
+    PERFORM setval(
+        pg_get_serial_sequence('oca_appearances_staging', 'appearanceid'),
+        max_id + (SELECT COUNT(*) FROM oca_appearances_staging)
+    );
+END $$;
+
 -- In the "appearances" nodes they have further nested info about the outcomes
 -- of those appearances. There are no unique identifers to be able to link
 -- these elements in the original data, so we parse the outcomes as a json

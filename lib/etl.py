@@ -134,27 +134,7 @@ def insert_staging_to_main(db, tables):
         if table in ('oca_metadata'): # skip these tables
             continue
         print(f"\t...Inserting to {table}")
-        if table == 'oca_appearances':
-            db.sql(f"""
-                INSERT INTO {table} (
-                    indexnumberid, 
-                    appearancedatetime, 
-                    appearancepurpose, 
-                    appearancereason, 
-                    appearancepart, 
-                    motionsequence
-                ) 
-                SELECT 
-                    indexnumberid, 
-                    appearancedatetime, 
-                    appearancepurpose, 
-                    appearancereason, 
-                    appearancepart, 
-                    motionsequence 
-                FROM {table}_staging;
-            """)
-        else:
-            db.sql(f"INSERT INTO {table} SELECT * FROM {table}_staging")
+        db.sql(f"INSERT INTO {table} SELECT * FROM {table}_staging")
         db.sql(f"DROP TABLE {table}_staging")
 
 
@@ -354,7 +334,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
             );
             """)
 
-    # expand appearance_outcomes from json
+    # reset appearanceid continuing from the postgresql sequence and expand appearance_outcomes from json
     print('\n   - Updating appearance outcomes...')
     db.execute_sql_file('update_appearance_outcomes.sql')
     
