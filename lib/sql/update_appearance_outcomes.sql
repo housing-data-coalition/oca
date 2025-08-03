@@ -2,18 +2,29 @@
 DO $$
 DECLARE
     max_id bigint;
-    offset_val bigint;
+    staging_count bigint;
 BEGIN
+    -- Get max ID from main table
     SELECT COALESCE(MAX(appearanceid), 0) INTO max_id FROM oca_appearances;
     
-    -- Update all existing rows to continue from max_id
-    UPDATE oca_appearances_staging 
-    SET appearanceid = appearanceid + max_id;
+    -- Get count of staging records
+    SELECT COUNT(*) INTO staging_count FROM oca_appearances_staging;
     
-    -- Set sequence for any future inserts
+    -- Update NULL appearanceid values with sequential numbers starting from max_id + 1
+    WITH numbered_rows AS (
+        SELECT ctid, ROW_NUMBER() OVER (ORDER BY ctid) as rn
+        FROM oca_appearances_staging 
+        WHERE appearanceid IS NULL
+    )
+    UPDATE oca_appearances_staging 
+    SET appearanceid = max_id + nr.rn
+    FROM numbered_rows nr
+    WHERE oca_appearances_staging.ctid = nr.ctid;
+    
+    -- Set sequence for future inserts
     PERFORM setval(
         pg_get_serial_sequence('oca_appearances_staging', 'appearanceid'),
-        max_id + (SELECT COUNT(*) FROM oca_appearances_staging)
+        max_id + staging_count
     );
 END $$;
 
