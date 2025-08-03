@@ -68,6 +68,9 @@ CREATE TABLE IF NOT EXISTS oca_appearances_staging (
 -- table via "update_apperance_outcomes.sql", and is delete afterwards.
 ALTER TABLE oca_appearances_staging ADD COLUMN appearanceoutcomes json;
 
+-- Avoid adding an appearanceid, have postgresql generate one when it is inserted into the main table
+ALTER TABLE oca_appearances_staging DROP COLUMN appearanceid;
+
 DROP TABLE IF EXISTS oca_appearance_outcomes_staging;
 CREATE TABLE IF NOT EXISTS oca_appearance_outcomes_staging (
 	LIKE oca_appearance_outcomes 

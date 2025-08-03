@@ -134,7 +134,27 @@ def insert_staging_to_main(db, tables):
         if table in ('oca_metadata'): # skip these tables
             continue
         print(f"\t...Inserting to {table}")
-        db.sql(f"INSERT INTO {table} SELECT * FROM {table}_staging")
+        if table == 'oca_appearances':
+            db.sql(f"""
+                INSERT INTO {table} (
+                    indexnumberid, 
+                    appearancedatetime, 
+                    appearancepurpose, 
+                    appearancereason, 
+                    appearancepart, 
+                    motionsequence
+                ) 
+                SELECT 
+                    indexnumberid, 
+                    appearancedatetime, 
+                    appearancepurpose, 
+                    appearancereason, 
+                    appearancepart, 
+                    motionsequence 
+                FROM {table}_staging;
+            """)
+        else:
+            db.sql(f"INSERT INTO {table} SELECT * FROM {table}_staging")
         db.sql(f"DROP TABLE {table}_staging")
 
 
