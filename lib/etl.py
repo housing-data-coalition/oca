@@ -213,7 +213,6 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     s3 = S3(**s3_args)
     
 
-
     # Create local versions of folder in the S3 bucket "oca-data"
     # # For debugging only -- replace with the var declarations below
     # priv_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data-private'))
@@ -519,3 +518,14 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
             aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/oca_addresses.csv', 'us-east-1'), 
             options :='FORMAT CSV, HEADER'); 
     """)
+
+    # update server-side encryption for all non-staged files (sse-s3) using the s3 key, 
+    # as the rds query_export_to_s3 uses its own key.. and that causes https://github.com/housing-data-coalition/oca/issues/15
+    print('Updating server-side encryption for S3 files')
+    public_files_to_encrypt = [
+        f for f in s3.list_files('', S3_PUBLIC_FOLDER) 
+        if not f.endswith('_staging.csv') and 'oca_addresses_private' not in f
+    ]
+    for f in public_files_to_encrypt:
+        print('-', f)
+        s3.update_encryption(f"{S3_PUBLIC_FOLDER}/{f}")
