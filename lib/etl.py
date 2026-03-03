@@ -459,6 +459,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     print('-', f'overwrite oca_addresses with geocoded version')
     db.execute_sql_file('reset_addresses_table.sql')
     db.sql(f"""
+    SET statement_timeout = '2000000';
         SELECT aws_s3.table_import_from_s3(
         'oca_addresses', '', '(FORMAT CSV, HEADER)',
         aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/oca_addresses_private.csv', 'us-east-1'),

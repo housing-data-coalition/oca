@@ -153,6 +153,20 @@ Make sure that RDS has IAM roles of AWSServiceRoleForRDS for s3Import, and custo
 }
 ```
 
+## Cron job for Synology
+
+### Export an image using docker
+
+docker save -o oca.tar oca-app
+
+### Create two tasks
+
+docker run -d --name oca-app --user root -v /volume1/docker/oca:/app --restart unless-stopped oca-app tail -f /dev/null >> /volume1/docker/cron.log 2>&1
+
+echo "$(date): Running script" >> /volume1/docker/cron.log
+docker exec oca-app python /app/oca_update.py >> /volume1/docker/cron.log 2>&1
+echo "$(date): Completed" >> /volume1/docker/cron.log
+
 <!-- 
 the max timeout of 15 minutes. this does not provide much flexibility for longer runtimes. 
 
