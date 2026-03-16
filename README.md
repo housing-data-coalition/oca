@@ -76,7 +76,7 @@ docker-compose exec app /bin/bash
 jupyter notebook --allow-root --ip 0.0.0.0 --no-browser
 ```
 
-### General rules for setting up a S3 Bucket
+### Setting up a S3 Bucket
 
 ```json
 {
@@ -110,8 +110,65 @@ jupyter notebook --allow-root --ip 0.0.0.0 --no-browser
 }
 ```
 
+### Setting up an RDS instance
+
+Since we use both `SELECT aws_s3.table_import_from_s3` and `SELECT * from aws_s3.query_export_to_s3` in the RDS, you need to install the aws_s3 extension. `CREATE EXTENSION IF NOT EXISTS aws_s3 CASCADE;`
+
+Make sure that RDS has IAM roles of AWSServiceRoleForRDS for s3Import, and custom role for s3Export so that you can write to the bucket as well as use Server Side Encryption with AWS KMS managed keys.
+
+```json
+{
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Sid": "VisualEditor1",
+			"Effect": "Allow",
+			"Action": [
+				"s3:PutObject",
+				"s3:GetObject",
+				"s3:AbortMultipartUpload",
+				"s3:ListBucket",
+				"s3:DeleteObject",
+				"s3:ListMultipartUploadParts"
+			],
+			"Resource": [
+				"arn:aws:s3:::oca-2-dev",
+				"arn:aws:s3:::oca-2-dev/*"
+			]
+		},
+		{
+			"Sid": "KMSPermissions",
+			"Effect": "Allow",
+			"Action": [
+				"kms:GenerateDataKey",
+				"kms:Decrypt",
+				"kms:DescribeKey",
+				"kms:CreateGrant"
+			],
+			"Resource": [
+				"arn:aws:kms:*:*:key/*"
+			]
+		}
+	]
+}
+```
+
+## Cron job for Synology
+
+### Export an image using docker
+
+docker save -o oca.tar oca-app
+
+### Create two tasks
+
+docker run -d --name oca-app --user root -v /volume1/docker/oca:/app --restart unless-stopped oca-app tail -f /dev/null >> /volume1/docker/cron.log 2>&1
+
+echo "$(date): Running script" >> /volume1/docker/cron.log
+docker exec oca-app python /app/oca_update.py >> /volume1/docker/cron.log 2>&1
+echo "$(date): Completed" >> /volume1/docker/cron.log
+
 <!-- 
-the max timeout of 15 minutes. this does not provide much flexibility for longer runtimes.
+the max timeout of 15 minutes. this does not provide much flexibility for longer runtimes. 
 
 ### (Optional) Running on AWS ECR and Lambda
 
