@@ -26,4 +26,9 @@ SET
   lon = s.lon,
   zip_code = s.zip_code
 FROM oca_addresses_geocode_staging AS s
-WHERE o.indexnumberid = s.indexnumberid;
+WHERE o.indexnumberid IS NOT DISTINCT FROM s.indexnumberid
+  AND o.street1 IS NOT DISTINCT FROM s.street1
+  AND o.street2 IS NOT DISTINCT FROM s.street2
+  AND o.city IS NOT DISTINCT FROM s.city
+  AND o.state IS NOT DISTINCT FROM s.state
+  AND o.postalcode IS NOT DISTINCT FROM s.postalcode;

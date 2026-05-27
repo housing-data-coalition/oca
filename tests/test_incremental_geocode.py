@@ -1,10 +1,13 @@
 import os
 import tracemalloc
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from lib.etl_geocode import (
+    ADDRESS_ROW_KEY_COLUMNS,
     GEOCODE_ADDRESS_COLUMNS,
+    address_row_key,
     fetch_addresses_needing_geocode,
     geocode_candidate_records,
     row_needs_geocode,
@@ -73,6 +76,78 @@ class GeocodeCandidateRecordsTests(unittest.TestCase):
         self.assertEqual(results, [])
         geocode_mock.assert_not_called()
 
+    def test_multi_address_same_case_distinct_geocodes(self):
+        """Same indexnumberid, different street1 — each row keeps its own geocode."""
+        shared_id = 'case-multi'
+        records = [
+            {
+                'indexnumberid': shared_id,
+                'lat': '',
+                'house_number': '1',
+                'street1': '100 Main St',
+                'street2': '',
+                'city': 'NYC',
+                'state': 'NY',
+                'postalcode': '10001',
+            },
+            {
+                'indexnumberid': shared_id,
+                'lat': '',
+                'house_number': '2',
+                'street1': '200 Oak Ave',
+                'street2': 'Apt 3',
+                'city': 'NYC',
+                'state': 'NY',
+                'postalcode': '10002',
+            },
+        ]
+
+        def fake_geocode_record(row, addr_cols):
+            row = dict(row)
+            if row['street1'] == '100 Main St':
+                row['lat'] = '40.100'
+                row['lon'] = '-73.100'
+            return row
+
+        def fake_census_batch(dataframe, pub_dir):
+            dataframe = dataframe.copy()
+            lats = []
+            lons = []
+            for street1 in dataframe['street1']:
+                if street1 == '200 Oak Ave':
+                    lats.append('40.200')
+                    lons.append('-73.200')
+                else:
+                    lats.append('')
+                    lons.append('')
+            dataframe['lat'] = lats
+            dataframe['lon'] = lons
+            return dataframe
+
+        results = geocode_candidate_records(
+            records,
+            geocode_workers=1,
+            census_batch_chunk_size=2500,
+            pub_dir='/tmp',
+            geocode_record_fn=fake_geocode_record,
+            geocode_using_census_batch_fn=fake_census_batch,
+        )
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0]['street1'], '100 Main St')
+        self.assertEqual(results[0]['lat'], '40.100')
+        self.assertEqual(results[1]['street1'], '200 Oak Ave')
+        self.assertEqual(results[1]['lat'], '40.200')
+        self.assertNotEqual(results[0]['lat'], results[1]['lat'])
+        self.assertEqual(
+            address_row_key(results[0]),
+            address_row_key(records[0]),
+        )
+        self.assertEqual(
+            address_row_key(results[1]),
+            address_row_key(records[1]),
+        )
+
     def test_idempotent_rerun_fetches_no_candidates(self):
         fake_db = mock.Mock()
         fake_db.sql_fetch_all_from_file.return_value = []
@@ -97,6 +172,51 @@ class FetchAddressesNeedingGeocodeTests(unittest.TestCase):
         )
         self.assertEqual(rows[0]['indexnumberid'], 'val-indexnumberid')
         self.assertEqual(rows[0]['lat'], '')
+
+
+class AddressRowKeyTests(unittest.TestCase):
+    def test_address_row_key_normalizes_none(self):
+        row = {
+            'indexnumberid': 'case-1',
+            'street1': '1 Main',
+            'street2': None,
+            'city': 'NYC',
+            'state': 'NY',
+            'postalcode': '10001',
+        }
+        self.assertEqual(
+            address_row_key(row),
+            ('case-1', '1 Main', '', 'NYC', 'NY', '10001'),
+        )
+
+    def test_distinct_keys_for_different_street1(self):
+        base = {
+            'indexnumberid': 'case-1',
+            'street2': '',
+            'city': 'NYC',
+            'state': 'NY',
+            'postalcode': '10001',
+        }
+        key_a = address_row_key({**base, 'street1': '100 Main St'})
+        key_b = address_row_key({**base, 'street1': '200 Oak Ave'})
+        self.assertNotEqual(key_a, key_b)
+
+
+class UpsertGeocodedAddressesSqlTests(unittest.TestCase):
+    def test_upsert_sql_matches_on_natural_address_key(self):
+        sql_path = Path(__file__).resolve().parents[1] / 'lib' / 'sql' / 'upsert_geocoded_addresses.sql'
+        sql = sql_path.read_text()
+        for col in ADDRESS_ROW_KEY_COLUMNS:
+            self.assertIn(
+                f'o.{col} IS NOT DISTINCT FROM s.{col}',
+                sql,
+                f'expected null-safe join on {col}',
+            )
+        self.assertNotRegex(
+            sql,
+            r'WHERE\s+o\.indexnumberid\s*=\s*s\.indexnumberid\s*;',
+            'upsert must not join on indexnumberid alone',
+        )
 
 
 class UpsertGeocodedAddressesTests(unittest.TestCase):

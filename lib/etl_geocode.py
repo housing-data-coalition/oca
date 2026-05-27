@@ -8,6 +8,10 @@ import pandas as pd
 
 from .geocode_record import geocode_record, geocode_using_census_batch
 
+ADDRESS_ROW_KEY_COLUMNS = [
+    'indexnumberid', 'street1', 'street2', 'city', 'state', 'postalcode',
+]
+
 GEOCODE_ADDRESS_COLUMNS = [
     'indexnumberid', 'street1', 'street2', 'city', 'state', 'postalcode',
     'status', 'house_number', 'street_name', 'borough_code', 'place_name',
@@ -35,6 +39,20 @@ def _has_lat(value):
         return False
     text = str(value).strip()
     return text != '' and text.lower() != 'nan'
+
+
+def address_row_key(row):
+    """Stable per-address identity for merge/upsert (ingest columns only)."""
+    parts = []
+    for col in ADDRESS_ROW_KEY_COLUMNS:
+        value = row.get(col)
+        if value is None:
+            parts.append('')
+        elif isinstance(value, float) and np.isnan(value):
+            parts.append('')
+        else:
+            parts.append(str(value))
+    return tuple(parts)
 
 
 def row_needs_geocode(row):
@@ -128,10 +146,10 @@ def geocode_candidate_records(
     else:
         census_results = []
 
-    by_id = {row['indexnumberid']: row for row in geosupport_results}
+    by_key = {address_row_key(row): row for row in geosupport_results}
     for row in census_results:
-        by_id[row['indexnumberid']] = row
-    return [by_id[row['indexnumberid']] for row in records]
+        by_key[address_row_key(row)] = row
+    return [by_key[address_row_key(row)] for row in records]
 
 
 def upsert_geocoded_addresses(db, rows):
