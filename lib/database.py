@@ -31,12 +31,20 @@ def insert_many(table_name, rows):
 class Database:
     """Database connection to OCA database"""
 
-    def __init__(self, db_url, autocommit = False):
+    def __init__(self, db_url, schema = '', autocommit = False):
         self.db_url = db_url
+        self.schema = schema
         self.conn = psycopg2.connect(db_url) 
+        if self.schema:
+            self.set_search_path(self.schema)
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.conn.close()
+
+    def set_search_path(self, schema):
+        with self.conn.cursor() as curs:
+            curs.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
+        self.conn.commit()
 
     def sql(self, SQL, autocommit = False):
         """ Executes single sql statement 

@@ -66,6 +66,30 @@ To run the whole process in the docker container run:
 docker-compose up 
 ```
 
+### Runtime controls (Step 1 refactor)
+
+These optional variables let operators isolate schema/data paths and tune memory-sensitive parts of the run. If omitted, behavior remains the same as before (new files only, default schema/search path, default worker/chunk values).
+
+- `DB_SCHEMA`: set PostgreSQL `search_path` target schema for the ETL session.
+- `S3_PREFIX`: optional namespace prefix for S3 object keys (applies to `private/` and `public/` paths).
+- `REPROCESS_GLOB`: filename glob against S3 `private/` zip backups (example: `LandlordTenant.Incr.2024-*.zip`).
+- `FORCE_REPROCESS`: when `true`, include `REPROCESS_GLOB` matches for replay; otherwise matches are logged and skipped.
+- `GEOCODE_WORKERS`: max workers for the Geosupport multiprocessing pool.
+- `CENSUS_BATCH_CHUNK_SIZE`: chunk size for Census batch geocoder requests (default `2500`).
+- `CSV_ROW_CHECK_CHUNK_SIZE`: chunk size for CSV non-empty checks before S3 import (default `1000`).
+
+Example Docker run with non-default schema and forced replay:
+
+```bash
+DB_SCHEMA=oca_refactor \
+S3_PREFIX=refactor/dev \
+REPROCESS_GLOB='LandlordTenant.Incr.2024-*.zip' \
+FORCE_REPROCESS=true \
+GEOCODE_WORKERS=4 \
+CENSUS_BATCH_CHUNK_SIZE=2000 \
+docker-compose run --rm app python oca_update.py
+```
+
 ### Jupyter notebook for maintenance
 
 Comment out `CMD ["python", "oca_update.py"]` in the Dockerfile

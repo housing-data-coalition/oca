@@ -5,6 +5,7 @@ import zipfile
 import requests
 import re
 import json
+import fnmatch
 from datetime import datetime
 # TODO - replace os.path with Pathlib and its '/' operator
 from pathlib import Path 
@@ -49,6 +50,14 @@ S3_PRIVATE_FOLDER = 'private'
 S3_PUBLIC_FOLDER = 'public'
 
 
+def s3_key(path, s3_prefix=''):
+    normalized_path = path.lstrip('/')
+    if not s3_prefix:
+        return normalized_path
+    normalized_prefix = s3_prefix.strip('/')
+    return f"{normalized_prefix}/{normalized_path}"
+
+
 def make_dir(dir_name):
     """ 
     Create a new directory in the same folder as this file, 
@@ -62,7 +71,7 @@ def make_dir(dir_name):
     return dir_path
 
 
-def list_new_data_files(sftp, s3):
+def list_new_data_files(sftp, s3, s3_prefix=''):
     """ 
     Get a list of filenames for all the data files available in the SFTP
     that are not already in the private S3 folder. These are the new ones 
@@ -74,7 +83,7 @@ def list_new_data_files(sftp, s3):
     """
 
     sftp_zip_files = sftp.list_files(DATA_ZIPFILE_PAT)
-    s3_zip_files = s3.list_files(DATA_ZIPFILE_PAT, S3_PRIVATE_FOLDER)
+    s3_zip_files = s3.list_files(DATA_ZIPFILE_PAT, s3_key(S3_PRIVATE_FOLDER, s3_prefix))
     new_sftp_zip_files = list(set(sftp_zip_files) - set(s3_zip_files))
 
     # It's important that everything is processed in order because files 
@@ -87,6 +96,36 @@ def list_new_data_files(sftp, s3):
     files += sorted(incr_files) if incr_files else []
 
     return files
+
+
+def list_reprocess_data_files(s3, reprocess_glob, s3_prefix=''):
+    if not reprocess_glob:
+        return []
+    s3_zip_files = s3.list_files(DATA_ZIPFILE_PAT, s3_key(S3_PRIVATE_FOLDER, s3_prefix))
+    return sorted([f for f in s3_zip_files if fnmatch.fnmatch(f, reprocess_glob)])
+
+
+def select_data_files_to_process(new_files, reprocess_files, force_reprocess=False):
+    def ordered(files):
+        init_files = sorted([f for f in files if 'Initial' in f])
+        incr_files = sorted([f for f in files if 'Incr' in f])
+        return init_files + incr_files
+
+    if not reprocess_files:
+        return ordered(new_files)
+
+    if not force_reprocess:
+        # Keep backward-compatible default behavior unless force mode is explicitly set.
+        return ordered(new_files)
+
+    merged = set(new_files) | set(reprocess_files)
+    return ordered(merged)
+
+
+def csv_has_rows(csv_filepath, chunk_size=1000):
+    for _ in pd.read_csv(csv_filepath, chunksize=chunk_size):
+        return True
+    return False
 
 
 def prep_db(s3, db, local_dir):
@@ -183,7 +222,7 @@ def download_pluto(output_dir):
     return pluto_file
 
 
-def upload_public_file(f, pub_dir, mode, s3_args):
+def upload_public_file(f, pub_dir, mode, s3_args, s3_prefix=''):
     """
     Uploads a local file from the pub_dir folder to the S3_PUBLIC_FOLDER.
 
@@ -198,13 +237,21 @@ def upload_public_file(f, pub_dir, mode, s3_args):
     # to maintain consistent names for public level-1 csv files, we'll rename the level-2 version
     if mode == "2" and f == "oca_addresses.csv":
         s3_filename = "oca_addresses_private.csv"
-    s3.upload_file(f"{S3_PUBLIC_FOLDER}/{s3_filename}", os.path.join(pub_dir, f))
+    s3.upload_file(s3_key(f"{S3_PUBLIC_FOLDER}/{s3_filename}", s3_prefix), os.path.join(pub_dir, f))
     del s3
 
-def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
+def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args, runtime_args=None):
     """ 
     Extract files from SFTP, parse cases, upload to S3 bucket
     """
+
+    runtime_args = runtime_args or {}
+    s3_prefix = (runtime_args.get('s3_prefix') or '').strip('/')
+    reprocess_glob = runtime_args.get('reprocess_glob') or ''
+    force_reprocess = bool(runtime_args.get('force_reprocess'))
+    geocode_workers = runtime_args.get('geocode_workers') or multiprocessing.cpu_count()
+    census_batch_chunk_size = runtime_args.get('census_batch_chunk_size') or 2500
+    csv_row_check_chunk_size = runtime_args.get('csv_row_check_chunk_size') or 1000
 
     db = Database(**db_args)
     Path('staging.duckdb').unlink(missing_ok=True)
@@ -221,19 +268,46 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     priv_dir = make_dir('data-private') # "private/"
     pub_dir = make_dir('data-public') # "public/"
     
-    # Get list of new files to download from SFTP
-    new_sftp_zip_files = list_new_data_files(sftp, s3)
+    # Get default and optional reprocess file selections.
+    new_sftp_zip_files = list_new_data_files(sftp, s3, s3_prefix=s3_prefix)
+    reprocess_s3_zip_files = list_reprocess_data_files(s3, reprocess_glob, s3_prefix=s3_prefix)
+    selected_zip_files = select_data_files_to_process(
+        new_sftp_zip_files,
+        reprocess_s3_zip_files,
+        force_reprocess=force_reprocess
+    )
 
-    # If there are no new files we can stop everything here. 
-    if not new_sftp_zip_files:
-        print('No new files to download from SFTP. Stopping process.')
+    if reprocess_glob:
+        print(f"Reprocess selector active: REPROCESS_GLOB={reprocess_glob}, FORCE_REPROCESS={force_reprocess}")
+        print(f"Matched S3 private files: {len(reprocess_s3_zip_files)}")
+        if reprocess_s3_zip_files and not force_reprocess:
+            print('Matched files are excluded unless FORCE_REPROCESS=true.')
+
+    # If there are no selected files we can stop everything here.
+    if not selected_zip_files:
+        print('No files selected for processing. Stopping process.')
         return True
 
-    # If there are new files, download them.
-    print('Downloading new files from SFTP:')
-    for f in new_sftp_zip_files:
+    # Download selected files from SFTP (new) and optionally from S3 backups.
+    print('Downloading selected files:')
+    reprocess_file_set = set(reprocess_s3_zip_files)
+    new_file_set = set(new_sftp_zip_files)
+    selected_set = set(selected_zip_files)
+
+    sftp_download_files = sorted(selected_set & new_file_set)
+    s3_download_files = sorted(selected_set & reprocess_file_set)
+
+    if sftp_download_files:
+        print('  - From SFTP (new files):')
+    for f in sftp_download_files:
         print('-', f)
         sftp.download_files(f, priv_dir)
+
+    if s3_download_files:
+        print('  - From S3 private backups:')
+    for f in s3_download_files:
+        print('-', f)
+        s3.download_file(s3_key(f"{S3_PRIVATE_FOLDER}/{f}", s3_prefix), os.path.join(priv_dir, f))
 
     # Sort zipfiles by date 
     def sort_by_date(file):
@@ -312,7 +386,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     staging_tables = [t + '_staging' for t in OCA_TABLES]
     public_files = [i for i in os.listdir(pub_dir) if i.endswith('.csv')]
     with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
-        files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args)) 
+        files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args), repeat(s3_prefix)) 
         pool.starmap(upload_public_file, files_zip)
 
     # reset staging tables then import from s3 to rds
@@ -321,7 +395,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         print('-', f"{t} table to db")
         # only import to the rds, if the local csv has rows
         csv_filepath = os.path.join(pub_dir, f"{t}.csv")
-        if len(pd.read_csv(csv_filepath)):
+        if csv_has_rows(csv_filepath, chunk_size=csv_row_check_chunk_size):
             columns = ''
             # ignore the appearanceid column
             if t == 'oca_appearances_staging': 
@@ -329,7 +403,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
             db.sql(f"""
                 SELECT aws_s3.table_import_from_s3(
                 '{t}', '{columns}', '(FORMAT CSV, HEADER)',
-                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/{t}.csv', 'us-east-1'),
+                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/{t}.csv", s3_prefix)}', 'us-east-1'),
                 aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
             );
             """)
@@ -357,7 +431,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
         db.sql(f"""
                 SELECT * from aws_s3.query_export_to_s3(
                     'SELECT * from {t}', 
-                    aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/{s3_filename}', 'us-east-1'), 
+                    aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/{s3_filename}", s3_prefix)}', 'us-east-1'), 
                     options :='FORMAT CSV, HEADER');
                 """)
 
@@ -396,7 +470,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     # Geocode records using NYC GeoSupport
     # TODO - check if pluto in the database matches the pluto version of the geosupport
     # TODO - adjust geocode to put lat/lng on the lot centroid? instead of the centerline/sidewalk
-    with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+    with multiprocessing.Pool(processes=min((geocode_workers, multiprocessing.cpu_count()))) as pool:
         it = pd.DataFrame(pool.map(functools.partial(geocode_record, addr_cols=addr_cols), records, 10000))
 
     del df_1 # delete unused objects to avoid docker's memory error / 137
@@ -413,7 +487,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     # geocode_using_census_batch(data_split[2], pub_dir)
 
     with multiprocessing.Pool(processes=min([5, multiprocessing.cpu_count()])) as pool:
-        chunk_size = 2500 # census batch limit is 10,000. Smaller batches tend to work better
+        chunk_size = census_batch_chunk_size # census batch limit is 10,000. Smaller batches tend to work better
         data_split = zip(np.split(df_2, range(chunk_size, df_2.shape[0], chunk_size)), repeat(pub_dir))
         it_2 = pd.concat(pool.starmap(geocode_using_census_batch, data_split))
         del df_2
@@ -436,13 +510,13 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     # s3 = S3(**s3_args)
 
     # Update "last updated date" files on S3 for the latest file processed
-    create_date_files(s3, new_sftp_zip_files[-1], pub_dir)
+    create_date_files(s3, selected_zip_files[-1], pub_dir)
 
     print('Uploading public files to S3:')
     public_files = [i for i in os.listdir(pub_dir) 
                     if i in ('last-updated-shield.png', 'last-updated-date.txt', 'oca_addresses_private.csv')]
     with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
-        files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args)) 
+        files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args), repeat(s3_prefix)) 
         pool.starmap(upload_public_file, files_zip) 
 
     # # Create/upload a dump of the database as a backup
@@ -454,7 +528,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     for f in os.listdir(priv_dir):
         if f != '.DS_Store': 
             print('-', f)
-            s3.upload_file(f"{S3_PRIVATE_FOLDER}/{f}", os.path.join(priv_dir, f))
+            s3.upload_file(s3_key(f"{S3_PRIVATE_FOLDER}/{f}", s3_prefix), os.path.join(priv_dir, f))
 
     # reset oca_addresses (removes geom), and uses the geocoded s3 import to overwrite oca_addresses table
     print('-', f'overwrite oca_addresses with geocoded version')
@@ -462,7 +536,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     db.sql(f"""
         SELECT aws_s3.table_import_from_s3(
         'oca_addresses', '', '(FORMAT CSV, HEADER)',
-        aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/oca_addresses_private.csv', 'us-east-1'),
+        aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses_private.csv", s3_prefix)}', 'us-east-1'),
         aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
     );
     """) # TODO: replace with similar sql query as update_metadata.sql to reduce the time this takes (10 mins)
@@ -499,7 +573,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     db.sql(f"""
             SELECT * from aws_s3.query_export_to_s3(
                 'SELECT * from oca_addresses_with_bbl', 
-                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/oca_addresses_with_bbl.csv', 'us-east-1'), 
+                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses_with_bbl.csv", s3_prefix)}', 'us-east-1'), 
                 options :='FORMAT CSV, HEADER'); 
         """)
 
@@ -507,7 +581,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     db.sql(f"""
             SELECT * from aws_s3.query_export_to_s3(
                 'SELECT * from oca_addresses_with_ct', 
-                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/oca_addresses_with_ct.csv', 'us-east-1'), 
+                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses_with_ct.csv", s3_prefix)}', 'us-east-1'), 
                 options :='FORMAT CSV, HEADER'); 
         """)
 
@@ -516,6 +590,6 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args):
     db.sql(f"""
         SELECT * from aws_s3.query_export_to_s3(
             'SELECT * from oca_addresses_public', 
-            aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/oca_addresses.csv', 'us-east-1'), 
+            aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses.csv", s3_prefix)}', 'us-east-1'), 
             options :='FORMAT CSV, HEADER'); 
     """)
