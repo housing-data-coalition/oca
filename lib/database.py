@@ -65,6 +65,11 @@ class Database:
             curs.execute(SQL)
             return curs.fetchone()
 
+    def sql_fetch_all(self, SQL):
+        with self.conn.cursor() as curs:
+            curs.execute(SQL)
+            return curs.fetchall()
+
     def insert_rows(self, rows, table_name):
         """
         Inserts many rows, all in the same transaction.

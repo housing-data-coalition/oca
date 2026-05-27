@@ -6,6 +6,8 @@ import requests
 import re
 import json
 import fnmatch
+import uuid
+import traceback
 from datetime import datetime
 # TODO - replace os.path with Pathlib and its '/' operator
 from pathlib import Path 
@@ -15,6 +17,7 @@ import pandas as pd
 import multiprocessing
 import functools
 from itertools import repeat
+from contextlib import contextmanager
 from lxml import etree
 import sys
 
@@ -120,6 +123,163 @@ def select_data_files_to_process(new_files, reprocess_files, force_reprocess=Fal
 
     merged = set(new_files) | set(reprocess_files)
     return ordered(merged)
+
+
+def completed_reprocess_files(db, reprocess_files):
+    if not reprocess_files:
+        return set()
+    quoted_files = ",".join(["'" + f.replace("'", "''") + "'" for f in reprocess_files])
+    rows = db.sql_fetch_all(f"""
+        SELECT DISTINCT ef.file_name
+        FROM etl_files ef
+        JOIN etl_runs er ON er.run_id = ef.run_id
+        WHERE ef.status = 'completed'
+          AND er.status = 'completed'
+          AND ef.file_name IN ({quoted_files})
+    """)
+    return {row[0] for row in rows}
+
+
+class EtlRunManifest:
+    @staticmethod
+    def _escape(value):
+        return str(value).replace("'", "''")
+
+    def _literal(self, value):
+        return f"'{self._escape(value)}'"
+
+    def _json_literal(self, value):
+        return f"'{self._escape(json.dumps(value))}'::jsonb"
+
+    def __init__(self, db, schema_name, s3_prefix, mode, reprocess_glob, force_reprocess):
+        self.db = db
+        self.schema_name = schema_name or 'public'
+        self.s3_prefix = s3_prefix or ''
+        self.mode = mode
+        self.reprocess_glob = reprocess_glob or ''
+        self.force_reprocess = force_reprocess
+        self.run_id = str(uuid.uuid4())
+        self.lock_key = None
+        self.lock_acquired = False
+
+    def setup_tables(self):
+        self.db.execute_sql_file('create_etl_manifest_tables.sql')
+
+    def acquire_lock(self):
+        row = self.db.sql_fetch_one(
+            f"SELECT hashtext('oca_etl:' || {self._literal(self.schema_name)})::bigint"
+        )
+        self.lock_key = row[0]
+        locked = self.db.sql_fetch_one(f"SELECT pg_try_advisory_lock({self.lock_key})")
+        self.lock_acquired = bool(locked and locked[0])
+        if not self.lock_acquired:
+            raise RuntimeError(f"Another ETL run is already active for schema '{self.schema_name}'.")
+
+    def release_lock(self):
+        if self.lock_acquired and self.lock_key is not None:
+            self.db.sql_fetch_one(f"SELECT pg_advisory_unlock({self.lock_key})")
+            self.lock_acquired = False
+
+    def create_run(self):
+        payload = {
+            "mode": self.mode,
+            "schema_name": self.schema_name,
+            "s3_prefix": self.s3_prefix,
+            "reprocess_glob": self.reprocess_glob,
+            "force_reprocess": self.force_reprocess,
+        }
+        self.db.sql(f"""
+            INSERT INTO etl_runs (
+                run_id, schema_name, s3_prefix, mode, reprocess_glob, force_reprocess, status, metadata, started_at
+            ) VALUES (
+                {self._literal(self.run_id)}, {self._literal(self.schema_name)}, {self._literal(self.s3_prefix)},
+                {self._literal(self.mode)}, {self._literal(self.reprocess_glob)},
+                {str(self.force_reprocess).upper()}, 'running', {self._json_literal(payload)}, NOW()
+            )
+        """)
+
+    def mark_run_completed(self, selected_count, processed_count, skipped_count):
+        self.db.sql(f"""
+            UPDATE etl_runs
+            SET status = 'completed',
+                completed_at = NOW(),
+                selected_file_count = {selected_count},
+                processed_file_count = {processed_count},
+                skipped_file_count = {skipped_count}
+            WHERE run_id = '{self.run_id}'
+        """)
+
+    def mark_run_failed(self, exc):
+        message = str(exc)
+        details = {"traceback": traceback.format_exc()}
+        self.db.sql(f"""
+            UPDATE etl_runs
+            SET status = 'failed',
+                completed_at = NOW(),
+                error_message = {self._literal(message)},
+                error_details = {self._json_literal(details)}
+            WHERE run_id = {self._literal(self.run_id)}
+        """)
+
+    def upsert_file(self, file_name, source, status, stage=None, details=None, error=None):
+        stage_value = "NULL" if stage is None else self._literal(stage)
+        details_value = self._json_literal(details or {})
+        error_message = "NULL" if error is None else self._literal(str(error))
+        error_details = "NULL" if error is None else self._json_literal({'traceback': traceback.format_exc()})
+        completed_at = "NOW()" if status in ("completed", "failed", "skipped") else "NULL"
+        started_at = "NOW()" if status in ("processing", "downloaded", "parsed", "promoted") else "NULL"
+        self.db.sql(f"""
+            INSERT INTO etl_files (
+                run_id, file_name, source, status, stage, details, started_at, completed_at, error_message, error_details, updated_at
+            ) VALUES (
+                {self._literal(self.run_id)}, {self._literal(file_name)}, {self._literal(source)}, {self._literal(status)}, {stage_value},
+                {details_value}, {started_at}, {completed_at}, {error_message}, {error_details}, NOW()
+            )
+            ON CONFLICT (run_id, file_name) DO UPDATE
+            SET source = EXCLUDED.source,
+                status = EXCLUDED.status,
+                stage = EXCLUDED.stage,
+                details = EXCLUDED.details,
+                started_at = COALESCE(etl_files.started_at, EXCLUDED.started_at),
+                completed_at = EXCLUDED.completed_at,
+                error_message = EXCLUDED.error_message,
+                error_details = EXCLUDED.error_details,
+                updated_at = NOW()
+        """)
+
+    def upsert_step(self, step_name, status, details=None, error=None):
+        details_value = self._json_literal(details or {})
+        started_at = "NOW()" if status == "running" else "NULL"
+        completed_at = "NOW()" if status in ("completed", "failed") else "NULL"
+        error_message = "NULL" if error is None else self._literal(str(error))
+        error_details = "NULL" if error is None else self._json_literal({'traceback': traceback.format_exc()})
+        self.db.sql(f"""
+            INSERT INTO etl_steps (
+                run_id, step_name, status, started_at, completed_at, error_message, error_details, details, updated_at
+            ) VALUES (
+                {self._literal(self.run_id)}, {self._literal(step_name)}, {self._literal(status)}, {started_at}, {completed_at},
+                {error_message}, {error_details}, {details_value}, NOW()
+            )
+            ON CONFLICT (run_id, step_name) DO UPDATE
+            SET status = EXCLUDED.status,
+                started_at = COALESCE(etl_steps.started_at, EXCLUDED.started_at),
+                completed_at = EXCLUDED.completed_at,
+                error_message = EXCLUDED.error_message,
+                error_details = EXCLUDED.error_details,
+                details = EXCLUDED.details,
+                updated_at = NOW()
+        """)
+
+
+@contextmanager
+def manifest_step(manifest, step_name, details=None):
+    manifest.upsert_step(step_name, 'running', details=details)
+    try:
+        yield
+        manifest.upsert_step(step_name, 'completed', details=details)
+    except Exception as exc:
+        manifest.upsert_step(step_name, 'failed', details=details, error=exc)
+        raise
 
 
 def csv_has_rows(csv_filepath, chunk_size=1000):
@@ -254,342 +414,238 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args, runtime_args=None
     csv_row_check_chunk_size = runtime_args.get('csv_row_check_chunk_size') or 1000
 
     db = Database(**db_args)
+    manifest = EtlRunManifest(
+        db=db,
+        schema_name=(runtime_args.get('db_schema') or db_args.get('schema') or 'public'),
+        s3_prefix=s3_prefix,
+        mode=mode,
+        reprocess_glob=reprocess_glob,
+        force_reprocess=force_reprocess
+    )
+    manifest.setup_tables()
+    manifest.acquire_lock()
+    manifest.create_run()
+
     Path('staging.duckdb').unlink(missing_ok=True)
     staging_db = DuckDB(dbname='staging.duckdb')
     sftp = Sftp(**sftp_args)
     s3 = S3(**s3_args)
-    
+    priv_dir = make_dir('data-private')
+    pub_dir = make_dir('data-public')
+    selected_zip_files = []
+    skipped_reprocess_files = []
+    new_file_set = set()
 
+    try:
+        manifest.upsert_step('select_files', 'running')
+        new_sftp_zip_files = list_new_data_files(sftp, s3, s3_prefix=s3_prefix)
+        reprocess_s3_zip_files = list_reprocess_data_files(s3, reprocess_glob, s3_prefix=s3_prefix)
+        if reprocess_glob and not force_reprocess and reprocess_s3_zip_files:
+            already_completed = completed_reprocess_files(db, reprocess_s3_zip_files)
+            skipped_reprocess_files = sorted(already_completed)
+            reprocess_s3_zip_files = sorted(set(reprocess_s3_zip_files) - already_completed)
 
-    # Create local versions of folder in the S3 bucket "oca-data"
-    # # For debugging only -- replace with the var declarations below
-    # priv_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data-private'))
-    # pub_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data-public'))
-    priv_dir = make_dir('data-private') # "private/"
-    pub_dir = make_dir('data-public') # "public/"
-    
-    # Get default and optional reprocess file selections.
-    new_sftp_zip_files = list_new_data_files(sftp, s3, s3_prefix=s3_prefix)
-    reprocess_s3_zip_files = list_reprocess_data_files(s3, reprocess_glob, s3_prefix=s3_prefix)
-    selected_zip_files = select_data_files_to_process(
-        new_sftp_zip_files,
-        reprocess_s3_zip_files,
-        force_reprocess=force_reprocess
-    )
+        selected_zip_files = select_data_files_to_process(
+            new_sftp_zip_files,
+            reprocess_s3_zip_files,
+            force_reprocess=force_reprocess
+        )
+        manifest.upsert_step('select_files', 'completed', details={'selected_file_count': len(selected_zip_files)})
 
-    if reprocess_glob:
-        print(f"Reprocess selector active: REPROCESS_GLOB={reprocess_glob}, FORCE_REPROCESS={force_reprocess}")
-        print(f"Matched S3 private files: {len(reprocess_s3_zip_files)}")
-        if reprocess_s3_zip_files and not force_reprocess:
-            print('Matched files are excluded unless FORCE_REPROCESS=true.')
+        if reprocess_glob:
+            print(f"Reprocess selector active: REPROCESS_GLOB={reprocess_glob}, FORCE_REPROCESS={force_reprocess}")
+            print(f"Matched S3 private files: {len(reprocess_s3_zip_files)}")
+            if skipped_reprocess_files and not force_reprocess:
+                print(f"Skipping already-completed reprocess files from manifest: {len(skipped_reprocess_files)}")
 
-    # If there are no selected files we can stop everything here.
-    if not selected_zip_files:
-        print('No files selected for processing. Stopping process.')
-        return True
+        if not selected_zip_files:
+            print('No files selected for processing. Stopping process.')
+            manifest.mark_run_completed(0, 0, len(skipped_reprocess_files))
+            return True
 
-    # Download selected files from SFTP (new) and optionally from S3 backups.
-    print('Downloading selected files:')
-    reprocess_file_set = set(reprocess_s3_zip_files)
-    new_file_set = set(new_sftp_zip_files)
-    selected_set = set(selected_zip_files)
+        reprocess_file_set = set(reprocess_s3_zip_files)
+        new_file_set = set(new_sftp_zip_files)
+        selected_set = set(selected_zip_files)
+        sftp_download_files = sorted(selected_set & new_file_set)
+        s3_download_files = sorted(selected_set & reprocess_file_set)
 
-    sftp_download_files = sorted(selected_set & new_file_set)
-    s3_download_files = sorted(selected_set & reprocess_file_set)
+        for f in sftp_download_files:
+            manifest.upsert_file(f, source='sftp', status='selected', stage='select')
+        for f in s3_download_files:
+            manifest.upsert_file(f, source='s3_private', status='selected', stage='select')
+        for f in skipped_reprocess_files:
+            manifest.upsert_file(f, source='s3_private', status='skipped', stage='select', details={'reason': 'already_completed_manifest'})
 
-    if sftp_download_files:
-        print('  - From SFTP (new files):')
-    for f in sftp_download_files:
-        print('-', f)
-        sftp.download_files(f, priv_dir)
+        manifest.upsert_step('download_files', 'running')
+        print('Downloading selected files:')
+        for f in sftp_download_files:
+            print('-', f)
+            sftp.download_files(f, priv_dir)
+            manifest.upsert_file(f, source='sftp', status='downloaded', stage='download')
+        for f in s3_download_files:
+            print('-', f)
+            s3.download_file(s3_key(f"{S3_PRIVATE_FOLDER}/{f}", s3_prefix), os.path.join(priv_dir, f))
+            manifest.upsert_file(f, source='s3_private', status='downloaded', stage='download')
+        manifest.upsert_step('download_files', 'completed')
 
-    if s3_download_files:
-        print('  - From S3 private backups:')
-    for f in s3_download_files:
-        print('-', f)
-        s3.download_file(s3_key(f"{S3_PRIVATE_FOLDER}/{f}", s3_prefix), os.path.join(priv_dir, f))
+        def sort_by_date(file):
+            r = re.search(r'(\d+.+)\.zip', file).group(0).replace('.', ' ')
+            return r
+        local_zip_files = sorted([os.path.join(priv_dir, f) for f in os.listdir(priv_dir) if f.endswith('.zip')], key=sort_by_date)
 
-    # Sort zipfiles by date 
-    def sort_by_date(file):
-        r = re.search(r'(\d+.+)\.zip', file).group(0).replace('.',' ')
-        return r
-    local_zip_files = sorted([os.path.join(priv_dir, f) for f in os.listdir(priv_dir) if f.endswith('.zip')], key = sort_by_date)
+        manifest.upsert_step('parse_xml', 'running')
+        staging_db.execute_sql_file('lib/sql/create_tables_staging_duckdb.sql')
+        print('Processing files:')
+        for zip_file in local_zip_files:
+            file_name = os.path.basename(zip_file)
+            manifest.upsert_file(file_name, source='local', status='processing', stage='parse')
+            extract_date = None
+            with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
+                for _, elem in etree.iterparse(xml_file, tag=oca_tag('RunDate')):
+                    if not extract_date:
+                        extract_date = elem.text
+                        break
+            with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
+                parse_file(xml_file, staging_db, extract_date)
+            manifest.upsert_file(file_name, source='local', status='parsed', stage='parse', details={'extract_date': extract_date})
+        manifest.upsert_step('parse_xml', 'completed')
 
-    # Rebuild the staging tables
-    # Then for each zipfile, unzip the XML file and 
-    # parse it into the staging tables
-    print('  - Creating staging tables...')
-    staging_db.execute_sql_file('lib/sql/create_tables_staging_duckdb.sql')
-    print('Processing files:')
-    for zip_file in local_zip_files:
-        print('-', os.path.basename(zip_file))
-        print('  - Parsing XML file...') 
-        # takes about 4-5 minutes per xml
-        extract_date = None
-        with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
-            for _, elem in etree.iterparse(xml_file, tag=oca_tag('RunDate')):
-                # Grab the first date and break 
-                if not extract_date:
-                    extract_date = elem.text
-                    break
+        staging_db.export_tables_to_csv(output_dir=pub_dir)
 
-        with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
-            parse_file(xml_file, staging_db, extract_date)
-
-    # export staging tables to the pub_dir, upload to s3, and then rds
-    staging_db.export_tables_to_csv(output_dir=pub_dir)
-
-    def preprocess_csvs(pub_dir):
-        """Convert all CSV files from DuckDB to PostgreSQL array format; and make small corrections (todo fix this in the parser/ duckdb export)"""
-        for filename in os.listdir(pub_dir):
-            if filename.endswith('.csv'):
-                file_path = os.path.join(pub_dir, filename)
-                df = pd.read_csv(file_path)
-                for col in df.columns:
-                    if df[col].dtype == 'object':
-                        # Convert arrays: [anything] -> {anything}
-                        # But only if the content doesn't contain JSON objects
-                        def replace_brackets(text):
-                            if pd.isna(text) or not isinstance(text, str):
+        def preprocess_csvs(target_dir):
+            for filename in os.listdir(target_dir):
+                if filename.endswith('.csv'):
+                    file_path = os.path.join(target_dir, filename)
+                    df = pd.read_csv(file_path)
+                    for col in df.columns:
+                        if df[col].dtype == 'object':
+                            def replace_brackets(text):
+                                if pd.isna(text) or not isinstance(text, str):
+                                    return text
+                                if text.startswith('[') and text.endswith(']'):
+                                    inner = text[1:-1].strip()
+                                    if inner.startswith('{') and inner.endswith('}'):
+                                        return text
+                                    return '{' + text[1:-1] + '}'
                                 return text
+                            df[col] = df[col].apply(replace_brackets)
+                    if filename.startswith('oca_appearances'):
+                        if 'appearanceid' in df.columns:
+                            del df['appearanceid']
+                        df['motionsequence'] = df['motionsequence'].astype('Int64')
+                    if filename.startswith('oca_judgments'):
+                        df['amendedfromjudgmentsequence'] = df['amendedfromjudgmentsequence'].astype('Int64')
+                    if filename.startswith('oca_warrants'):
+                        df['executionstayeddays'] = df['executionstayeddays'].astype('Int64')
+                        df['issuancestayeddays'] = df['issuancestayeddays'].astype('Int64')
+                    df.to_csv(file_path, index=False)
 
-                            if text.startswith('[') and text.endswith(']'):
-                                inner_content = text[1:-1].strip()
-                                # Don't replace if the inner content is wrapped in {}
-                                # Todo: fix appearanceoutcomes that are blank [] ... they are still converted to {}
-                                if inner_content.startswith('{') and inner_content.endswith('}'):
-                                    return text  # Keep original - it's [{}] format
-                                else:
-                                    return '{' + text[1:-1] + '}'  # Convert [] to {}
-                            
-                            return text
-                        
-                        df[col] = df[col].apply(replace_brackets)
+        preprocess_csvs(pub_dir)
+        staging_tables = [t + '_staging' for t in OCA_TABLES]
+        public_files = [i for i in os.listdir(pub_dir) if i.endswith('.csv')]
+        with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
+            files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args), repeat(s3_prefix))
+            pool.starmap(upload_public_file, files_zip)
 
-                if filename.startswith('oca_appearances'):
-                    # remove the appearanceid column, BIGSERIAL is assigned in postgres
-                    if 'appearanceid' in df.columns: del df['appearanceid']
-                    # change motionsequence to a int instead of a float
-                    df['motionsequence'] = df['motionsequence'].astype('Int64')
-
-                if filename.startswith('oca_judgments'):
-                    df['amendedfromjudgmentsequence'] = df['amendedfromjudgmentsequence'].astype('Int64')
-
-                if filename.startswith('oca_warrants'):
-                    df['executionstayeddays'] = df['executionstayeddays'].astype('Int64')
-                    df['issuancestayeddays'] = df['issuancestayeddays'].astype('Int64')
-
-                df.to_csv(file_path, index=False)
-    
-    print('Convert csvs:')
-    preprocess_csvs(pub_dir)
-    staging_tables = [t + '_staging' for t in OCA_TABLES]
-    public_files = [i for i in os.listdir(pub_dir) if i.endswith('.csv')]
-    with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
-        files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args), repeat(s3_prefix)) 
-        pool.starmap(upload_public_file, files_zip)
-
-    # reset staging tables then import from s3 to rds
-    db.execute_sql_file('create_tables_staging.sql')
-    for t in staging_tables:
-        print('-', f"{t} table to db")
-        # only import to the rds, if the local csv has rows
-        csv_filepath = os.path.join(pub_dir, f"{t}.csv")
-        if csv_has_rows(csv_filepath, chunk_size=csv_row_check_chunk_size):
-            columns = ''
-            # ignore the appearanceid column
-            if t == 'oca_appearances_staging': 
-                columns = 'indexnumberid, appearancedatetime, appearancepurpose, appearancereason, appearancepart, motionsequence, appearanceoutcomes'
-            db.sql(f"""
-                SELECT aws_s3.table_import_from_s3(
-                '{t}', '{columns}', '(FORMAT CSV, HEADER)',
-                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/{t}.csv", s3_prefix)}', 'us-east-1'),
-                aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
-            );
-            """)
-
-    # expand appearance_outcomes from json
-    print('\n   - Updating appearance outcomes...')
-    db.execute_sql_file('update_appearance_outcomes.sql')
-    
-    print('\n   - Inserting from staging to main ...')
-    # moves records from staging tables to the main tables, skips oca_metadata
-    insert_staging_to_main(db, OCA_TABLES) 
-
-    # Merging in oca_metadata using case if logic 
-    print('\n   - Update metadata in main ...')
-    db.execute_sql_file('update_metadata.sql')
-
-    
-    # Export the rds tables to csv files directly into the s3 bucket
-    for t in OCA_TABLES:
-        print('-', f'{t} table from db to s3')
-        # to maintain consistent names for public level-1 csv files, we'll rename the level-2 version
-        s3_filename = t + '.csv'
-        if t == "oca_addresses":
-            s3_filename = "oca_addresses_private.csv"
-        db.sql(f"""
-                SELECT * from aws_s3.query_export_to_s3(
-                    'SELECT * from {t}', 
-                    aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/{s3_filename}", s3_prefix)}', 'us-east-1'), 
-                    options :='FORMAT CSV, HEADER');
+        manifest.upsert_step('promote_staging', 'running')
+        db.execute_sql_file('create_tables_staging.sql')
+        for t in staging_tables:
+            csv_filepath = os.path.join(pub_dir, f"{t}.csv")
+            if csv_has_rows(csv_filepath, chunk_size=csv_row_check_chunk_size):
+                columns = ''
+                if t == 'oca_appearances_staging':
+                    columns = 'indexnumberid, appearancedatetime, appearancepurpose, appearancereason, appearancepart, motionsequence, appearanceoutcomes'
+                db.sql(f"""
+                    SELECT aws_s3.table_import_from_s3(
+                    '{t}', '{columns}', '(FORMAT CSV, HEADER)',
+                    aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/{t}.csv", s3_prefix)}', 'us-east-1'),
+                    aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
+                );
                 """)
 
-    # Export oca_addresses_private.csv to pub_dir to geocode
-    csv_filepath = os.path.join(pub_dir, f"oca_addresses_private.csv")
-    db.export_csv('oca_addresses', csv_filepath)
+        db.execute_sql_file('update_appearance_outcomes.sql')
+        insert_staging_to_main(db, OCA_TABLES)
+        db.execute_sql_file('update_metadata.sql')
+        for selected_name in selected_zip_files:
+            source = 'sftp' if selected_name in new_file_set else 's3_private'
+            manifest.upsert_file(selected_name, source=source, status='completed', stage='promote')
+        manifest.upsert_step('promote_staging', 'completed')
 
-    input_csv = Path(pub_dir) / 'oca_addresses_private.csv'
-    output_csv = Path(pub_dir) /'oca_addresses_private.csv'
-    addr_cols = ['street1', 'city', 'postalcode']
+        manifest.upsert_step('publish_tables', 'running')
+        for t in OCA_TABLES:
+            s3_filename = t + '.csv'
+            if t == "oca_addresses":
+                s3_filename = "oca_addresses_private.csv"
+            db.sql(f"""
+                    SELECT * from aws_s3.query_export_to_s3(
+                        'SELECT * from {t}',
+                        aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/{s3_filename}", s3_prefix)}', 'us-east-1'),
+                        options :='FORMAT CSV, HEADER');
+                    """)
+        manifest.upsert_step('publish_tables', 'completed')
 
-    #keep all cols
-    keep_cols = lambda x: x
-
-    df = pd.read_csv(
-        input_csv, 
-        dtype = str,
-        index_col = False, 
-        usecols=keep_cols,
-        keep_default_na=False
-    )
-
-    #filter for only records that need to be geocoded
-    df_1 = df[
-            ((pd.isna(df['lat'])) | (df['lat'] == '')) & 
-            ((df['house_number'] != '') | (pd.notna(df['house_number'])))
-        ].copy().reset_index()
-    
-    # # DEBUG: geocode all records
-    # df_1 = df
-
-    print(f'Geocoding {len(df_1)} entries in {output_csv}.')
-
-    records = df_1.to_dict('records')
-
-    # Geocode records using NYC GeoSupport
-    # TODO - check if pluto in the database matches the pluto version of the geosupport
-    # TODO - adjust geocode to put lat/lng on the lot centroid? instead of the centerline/sidewalk
-    with multiprocessing.Pool(processes=min((geocode_workers, multiprocessing.cpu_count()))) as pool:
-        it = pd.DataFrame(pool.map(functools.partial(geocode_record, addr_cols=addr_cols), records, 10000))
-
-    del df_1 # delete unused objects to avoid docker's memory error / 137
-    del records 
-    
-    # Geocode other records using the US Batch Census Geocoder
-    #   Sub-select for all addresses that are missing latitude; also needs to have a house number
-    df_2 = it[(((pd.isna(it['lat'])) | (it['lat'] == '')))].copy().reset_index()
-    print(f'Geocoding {len(df_2)} entries in {output_csv} using another geocoder. {datetime.now()}')
-
-    # For debugging only
-    # ---
-    # data_split = np.split(df_2, range(chunk_size, df_2.shape[0], 10000))
-    # geocode_using_census_batch(data_split[2], pub_dir)
-
-    with multiprocessing.Pool(processes=min([5, multiprocessing.cpu_count()])) as pool:
-        chunk_size = census_batch_chunk_size # census batch limit is 10,000. Smaller batches tend to work better
-        data_split = zip(np.split(df_2, range(chunk_size, df_2.shape[0], chunk_size)), repeat(pub_dir))
-        it_2 = pd.concat(pool.starmap(geocode_using_census_batch, data_split))
-        del df_2
-        del data_split
-        
-    print(f'Done geocoding. {datetime.now()}')
-    # Concat and drop duplicates by keeping the last changes from US Batch Census Geocoder (overwrites the GeoSupport returns
-    export_cols = ['indexnumberid', 'street1', 'street2', 'city', 'state',
-        'postalcode', 'status', 'house_number', 'street_name', 'borough_code',
-        'place_name', 'sname', 'hnum', 'boro', 'lat', 'bin', 'bbl', 'cd',
-        'ct', 'council', 'grc', 'grc2', 'msg', 'msg2', 'lon', 'zip_code']
-    concat = pd.concat([df, it, it_2], ignore_index = True).drop_duplicates(subset=['indexnumberid'], ignore_index = True, keep = 'last')[export_cols]
-    del df
-    del it
-    del it_2
-    pd.DataFrame(concat).to_csv(output_csv, index=False)
-    del concat
-
-    # # reset connection to s3
-    # s3 = S3(**s3_args)
-
-    # Update "last updated date" files on S3 for the latest file processed
-    create_date_files(s3, selected_zip_files[-1], pub_dir)
-
-    print('Uploading public files to S3:')
-    public_files = [i for i in os.listdir(pub_dir) 
-                    if i in ('last-updated-shield.png', 'last-updated-date.txt', 'oca_addresses_private.csv')]
-    with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
-        files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args), repeat(s3_prefix)) 
-        pool.starmap(upload_public_file, files_zip) 
-
-    # # Create/upload a dump of the database as a backup
-    # print('Creating database dump and uploading to s3')
-    # db.dump_to(os.path.join(priv_dir, 'oca.dump'))
-
-    # Upload raw data files and database dump to private folder in S3 bucket
-    print('Uploading private files to S3:')
-    for f in os.listdir(priv_dir):
-        if f != '.DS_Store': 
-            print('-', f)
-            s3.upload_file(s3_key(f"{S3_PRIVATE_FOLDER}/{f}", s3_prefix), os.path.join(priv_dir, f))
-
-    # reset oca_addresses (removes geom), and uses the geocoded s3 import to overwrite oca_addresses table
-    print('-', f'overwrite oca_addresses with geocoded version')
-    db.execute_sql_file('reset_addresses_table.sql')
-    db.sql(f"""
-        SELECT aws_s3.table_import_from_s3(
-        'oca_addresses', '', '(FORMAT CSV, HEADER)',
-        aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses_private.csv", s3_prefix)}', 'us-east-1'),
-        aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
-    );
-    """) # TODO: replace with similar sql query as update_metadata.sql to reduce the time this takes (10 mins)
-
-    # # setup pluto if it does not exist
-    # # # TODO: setup census tracts if it does not exist 
-    # if not db.sql_fetch_one(
-    #     "SELECT * FROM information_schema.tables WHERE table_name = 'pluto'"):
-    #     pluto_file = download_pluto(pub_dir)
-        
-
-    #     print('uploading pluto to s3')
-    #     s3.upload_file(f"{S3_PUBLIC_FOLDER}/pluto.csv", pluto_file)
-
-    #     print('importing pluto to db')
-    #     db.execute_sql_file('create_pluto_table.sql')
-                
-    #     db.sql(f"""
-    #         SELECT aws_s3.table_import_from_s3(
-    #         'pluto', '', '(FORMAT CSV, HEADER)',
-    #         aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', 'public/pluto_24v2.csv', 'us-east-1'),
-    #         aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
-    #     );
-    #     """)
-   
-    #     db.execute_sql_file('alter_pluto_table.sql')
-
-   
-    # create views and grant access to folks
-    db.execute_sql_file('create_addresses_views.sql')
-
-    # export views directly to s3, each takes 1-2 minutes
-    print(f"Creating oca_addresses_with_bbl and exporting to S3")
-    db.sql(f"""
-            SELECT * from aws_s3.query_export_to_s3(
-                'SELECT * from oca_addresses_with_bbl', 
-                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses_with_bbl.csv", s3_prefix)}', 'us-east-1'), 
-                options :='FORMAT CSV, HEADER'); 
+        manifest.upsert_step('geocode_refresh', 'running')
+        csv_filepath = os.path.join(pub_dir, "oca_addresses_private.csv")
+        db.export_csv('oca_addresses', csv_filepath)
+        input_csv = Path(pub_dir) / 'oca_addresses_private.csv'
+        output_csv = Path(pub_dir) / 'oca_addresses_private.csv'
+        df = pd.read_csv(input_csv, dtype=str, index_col=False, usecols=lambda x: x, keep_default_na=False)
+        df_1 = df[((pd.isna(df['lat'])) | (df['lat'] == '')) & ((df['house_number'] != '') | (pd.notna(df['house_number'])))].copy().reset_index()
+        records = df_1.to_dict('records')
+        with multiprocessing.Pool(processes=min((geocode_workers, multiprocessing.cpu_count()))) as pool:
+            it = pd.DataFrame(pool.map(functools.partial(geocode_record, addr_cols=['street1', 'city', 'postalcode']), records, 10000))
+        df_2 = it[(((pd.isna(it['lat'])) | (it['lat'] == '')))].copy().reset_index()
+        with multiprocessing.Pool(processes=min([5, multiprocessing.cpu_count()])) as pool:
+            chunk_size = census_batch_chunk_size
+            data_split = zip(np.split(df_2, range(chunk_size, df_2.shape[0], chunk_size)), repeat(pub_dir))
+            it_2 = pd.concat(pool.starmap(geocode_using_census_batch, data_split))
+        export_cols = ['indexnumberid', 'street1', 'street2', 'city', 'state', 'postalcode', 'status', 'house_number', 'street_name', 'borough_code', 'place_name', 'sname', 'hnum', 'boro', 'lat', 'bin', 'bbl', 'cd', 'ct', 'council', 'grc', 'grc2', 'msg', 'msg2', 'lon', 'zip_code']
+        concat = pd.concat([df, it, it_2], ignore_index=True).drop_duplicates(subset=['indexnumberid'], ignore_index=True, keep='last')[export_cols]
+        pd.DataFrame(concat).to_csv(output_csv, index=False)
+        create_date_files(s3, selected_zip_files[-1], pub_dir)
+        public_files = [i for i in os.listdir(pub_dir) if i in ('last-updated-shield.png', 'last-updated-date.txt', 'oca_addresses_private.csv')]
+        with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
+            files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args), repeat(s3_prefix))
+            pool.starmap(upload_public_file, files_zip)
+        for f in os.listdir(priv_dir):
+            if f != '.DS_Store':
+                s3.upload_file(s3_key(f"{S3_PRIVATE_FOLDER}/{f}", s3_prefix), os.path.join(priv_dir, f))
+        db.execute_sql_file('reset_addresses_table.sql')
+        db.sql(f"""
+            SELECT aws_s3.table_import_from_s3(
+            'oca_addresses', '', '(FORMAT CSV, HEADER)',
+            aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses_private.csv", s3_prefix)}', 'us-east-1'),
+            aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
+        );
         """)
-
-    print(f"Creating oca_addresses_with_ct and exporting to S3")
-    db.sql(f"""
+        db.execute_sql_file('create_addresses_views.sql')
+        db.sql(f"""
+                SELECT * from aws_s3.query_export_to_s3(
+                    'SELECT * from oca_addresses_with_bbl',
+                    aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses_with_bbl.csv", s3_prefix)}', 'us-east-1'),
+                    options :='FORMAT CSV, HEADER');
+            """)
+        db.sql(f"""
+                SELECT * from aws_s3.query_export_to_s3(
+                    'SELECT * from oca_addresses_with_ct',
+                    aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses_with_ct.csv", s3_prefix)}', 'us-east-1'),
+                    options :='FORMAT CSV, HEADER');
+            """)
+        db.sql(f"""
             SELECT * from aws_s3.query_export_to_s3(
-                'SELECT * from oca_addresses_with_ct', 
-                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses_with_ct.csv", s3_prefix)}', 'us-east-1'), 
-                options :='FORMAT CSV, HEADER'); 
+                'SELECT * from oca_addresses_public',
+                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses.csv", s3_prefix)}', 'us-east-1'),
+                options :='FORMAT CSV, HEADER');
         """)
+        manifest.upsert_step('geocode_refresh', 'completed')
 
-    # add level-1 version of address table from level-2 data and maintain consistent name
-    print(f"Creating oca_addresses_public and exporting to S3")
-    db.sql(f"""
-        SELECT * from aws_s3.query_export_to_s3(
-            'SELECT * from oca_addresses_public', 
-            aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses.csv", s3_prefix)}', 'us-east-1'), 
-            options :='FORMAT CSV, HEADER'); 
-    """)
+        manifest.mark_run_completed(len(selected_zip_files), len(selected_zip_files), len(skipped_reprocess_files))
+        return True
+    except Exception as exc:
+        for selected_name in selected_zip_files:
+            source = 'sftp' if selected_name in new_file_set else 's3_private'
+            manifest.upsert_file(selected_name, source=source, status='failed', stage='run', error=exc)
+        manifest.mark_run_failed(exc)
+        raise
+    finally:
+        manifest.release_lock()
