@@ -8,7 +8,12 @@
 .env
 Dockerfile
 docker-compose.yml
+dockerhub-publish.sh
 __pycache__/
+
+notebooks/
+docs/
+k8s/
 
 # data folders
 staging.db
