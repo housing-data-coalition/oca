@@ -16,10 +16,10 @@ from .etl_csv import preprocess_staging_csv_dir
 from .etl_helpers import (
     create_date_files,
     csv_has_rows,
-    insert_staging_to_main,
     s3_key,
     upload_public_file,
 )
+from .etl_promotion import promote_staging_to_main
 from .etl_geocode import (
     fetch_addresses_needing_geocode,
     geocode_candidate_records,
@@ -176,8 +176,8 @@ def import_and_promote_staging(manifest, db, pub_dir, s3_args, s3_prefix, select
 
     db.execute_sql_file('normalize_staging_after_import.sql')
     db.execute_sql_file('update_appearance_outcomes.sql')
-    insert_staging_to_main(db, OCA_TABLES)
-    db.execute_sql_file('update_metadata.sql')
+    print('\t...Promoting staging tables to main (single transaction)')
+    promote_staging_to_main(db)
     for selected_name in selection.selected_zip_files:
         source = 'sftp' if selected_name in selection.new_file_set else 's3_private'
         manifest.upsert_file(selected_name, source=source, status='completed', stage='promote')

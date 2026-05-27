@@ -1,6 +1,7 @@
 import urllib.parse
 import psycopg2
 import psycopg2.extras
+from contextlib import contextmanager
 from psycopg2 import sql
 import os
 
@@ -46,19 +47,35 @@ class Database:
             curs.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
         self.conn.commit()
 
-    def sql(self, SQL, autocommit = False):
-        """ Executes single sql statement 
+    def execute(self, SQL, autocommit=False):
+        """Execute SQL without committing (for use inside transaction blocks)."""
+        if autocommit:
+            self.conn.set_session(autocommit=True)
 
-        Set auto commit to run queries like VACUUM FULL [1]
-        [1]: https://til.codeinthehole.com/posts/about-a-gotcha-with-psycopg2s-autocommit-handling/
-        """
-        if autocommit: self.conn.set_session(autocommit=True)
-        
         with self.conn.cursor() as curs:
             curs.execute(SQL)
 
-        if autocommit: self.conn.set_session(autocommit=False) # unset
+        if autocommit:
+            self.conn.set_session(autocommit=False)
+
+    def sql(self, SQL, autocommit=False):
+        """Execute a single SQL statement and commit.
+
+        Set autocommit to run queries like VACUUM FULL [1]
+        [1]: https://til.codeinthehole.com/posts/about-a-gotcha-with-psycopg2s-autocommit-handling/
+        """
+        self.execute(SQL, autocommit=autocommit)
         self.conn.commit()
+
+    @contextmanager
+    def transaction(self):
+        """Run a block in one DB transaction; rollback on any exception."""
+        try:
+            yield self
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def sql_fetch_one(self, SQL):
         with self.conn.cursor() as curs:
@@ -96,7 +113,7 @@ class Database:
         self.conn.commit()
 
 
-    def execute_sql_file(self, sql_file):
+    def execute_sql_file(self, sql_file, commit=True):
         """
         Executes the provided sql file.
         Assumes the path is relative to ./sql
@@ -104,7 +121,11 @@ class Database:
         file_path = os.path.join(os.path.dirname(__file__), 'sql', sql_file)
 
         with open(file_path, 'r', encoding='utf-8') as f:
-            self.sql(f.read())
+            sql_text = f.read()
+        if commit:
+            self.sql(sql_text)
+        else:
+            self.execute(sql_text)
 
 
     def export_csv(self, table_name, file_path):

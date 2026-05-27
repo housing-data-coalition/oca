@@ -19,11 +19,15 @@ from .etl_helpers import (
     create_date_files,
     csv_has_rows,
     download_pluto,
-    insert_staging_to_main,
     make_dir,
     prep_db,
     s3_key,
     upload_public_file,
+)
+from .etl_promotion import (
+    promote_staging_to_main,
+    promotion_counts_checksum,
+    promotion_table_counts,
 )
 from .etl_run_manifest import EtlRunManifest, completed_reprocess_files, manifest_step
 from .etl_stages import (
@@ -55,7 +59,9 @@ __all__ = [
     'manifest_step',
     'csv_has_rows',
     'prep_db',
-    'insert_staging_to_main',
+    'promote_staging_to_main',
+    'promotion_table_counts',
+    'promotion_counts_checksum',
     'create_date_files',
     'download_pluto',
     'upload_public_file',

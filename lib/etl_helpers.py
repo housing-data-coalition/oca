@@ -64,36 +64,6 @@ def prep_db(s3, db, local_dir):
         db.execute_sql_file('create_tables.sql')
 
 
-def insert_staging_to_main(db, tables):
-    """ 
-    Delete all cases from main tables if they exist in the staging table, 
-    then insert all records from the staging tables to the main tables
-
-    issue: SET session_replication_role = replica 
-        https://stackoverflow.com/questions/3942258/how-do-i-temporarily-disable-triggers-in-postgresql/18709987#18709987 
-        to a work around to avoid DELETE FROM command stalling. 
-        A VACUUM FULL on all the tables were tried, it does not seem to help
-        Might be an issue with the staging table schema?
-
-    :param db: Database object
-    """
-
-    db.sql("SET session_replication_role = replica;")
-    for table in tables:
-        if table in ('oca_metadata'): # skip these tables
-            continue
-        print(f"\t...Deleting older entries from {table}")
-        db.sql(f"DELETE FROM {table} WHERE indexnumberid IN (SELECT indexnumberid FROM oca_index_staging)")
-    db.sql("SET session_replication_role = default;")
-
-    for table in tables:
-        if table in ('oca_metadata'): # skip these tables
-            continue
-        print(f"\t...Inserting to {table}")
-        db.sql(f"INSERT INTO {table} SELECT * FROM {table}_staging")
-        db.sql(f"DROP TABLE {table}_staging")
-
-
 def create_date_files(s3, data_file, local_dir):
     """
     Create a text file and a custom shield image with date the data was 
