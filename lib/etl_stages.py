@@ -232,6 +232,7 @@ def geocode_and_publish_addresses(
             s3.upload_file(s3_key(f"{S3_PRIVATE_FOLDER}/{f}", s3_prefix), os.path.join(priv_dir, f))
     db.execute_sql_file('reset_addresses_table.sql')
     db.sql(f"""
+        SET statement_timeout = '2000000';
         SELECT aws_s3.table_import_from_s3(
         'oca_addresses', '', '(FORMAT CSV, HEADER)',
         aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses_private.csv", s3_prefix)}', 'us-east-1'),
@@ -257,4 +258,13 @@ def geocode_and_publish_addresses(
             aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses.csv", s3_prefix)}', 'us-east-1'),
             options :='FORMAT CSV, HEADER');
     """)
+    print('Updating server-side encryption for S3 files')
+    public_folder = s3_key(S3_PUBLIC_FOLDER, s3_prefix)
+    public_files_to_encrypt = [
+        f for f in s3.list_files('', public_folder)
+        if not f.endswith('_staging.csv') and 'oca_addresses_private' not in f
+    ]
+    for f in public_files_to_encrypt:
+        print('-', f)
+        s3.update_encryption(s3_key(f"{S3_PUBLIC_FOLDER}/{f}", s3_prefix))
     manifest.upsert_step('geocode_refresh', 'completed')
