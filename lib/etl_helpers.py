@@ -1,10 +1,10 @@
+import csv
 import io
 import os
 import re
 import shutil
 import zipfile
 
-import pandas as pd
 import requests
 
 from .etl_constants import S3_PRIVATE_FOLDER, S3_PUBLIC_FOLDER
@@ -32,9 +32,16 @@ def make_dir(dir_name):
     return dir_path
 
 
-def csv_has_rows(csv_filepath, chunk_size=1000):
-    for _ in pd.read_csv(csv_filepath, chunksize=chunk_size):
-        return True
+def csv_has_rows(csv_filepath):
+    """Return True when the CSV has at least one data row (header excluded)."""
+    with open(csv_filepath, newline='', encoding='utf-8') as csv_file:
+        reader = csv.reader(csv_file)
+        try:
+            next(reader)
+        except StopIteration:
+            return False
+        for _ in reader:
+            return True
     return False
 
 

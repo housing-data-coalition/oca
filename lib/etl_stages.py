@@ -17,6 +17,7 @@ from .etl_file_selection import (
     select_data_files_to_process,
 )
 from .etl_run_manifest import completed_reprocess_files
+from .etl_csv import preprocess_staging_csv_dir
 from .etl_helpers import (
     create_date_files,
     csv_has_rows,
@@ -145,53 +146,24 @@ def parse_xml_to_staging(manifest, staging_db, priv_dir):
     manifest.upsert_step('parse_xml', 'completed')
 
 
-def preprocess_and_upload_staging_csvs(staging_db, pub_dir, mode, s3_args, s3_prefix):
+def preprocess_and_upload_staging_csvs(
+    staging_db, pub_dir, mode, s3_args, s3_prefix, csv_preprocess_chunk_size=1000
+):
     staging_db.export_tables_to_csv(output_dir=pub_dir)
-
-    def preprocess_csvs(target_dir):
-        for filename in os.listdir(target_dir):
-            if filename.endswith('.csv'):
-                file_path = os.path.join(target_dir, filename)
-                df = pd.read_csv(file_path)
-                for col in df.columns:
-                    if df[col].dtype == 'object':
-                        def replace_brackets(text):
-                            if pd.isna(text) or not isinstance(text, str):
-                                return text
-                            if text.startswith('[') and text.endswith(']'):
-                                inner = text[1:-1].strip()
-                                if inner.startswith('{') and inner.endswith('}'):
-                                    return text
-                                return '{' + text[1:-1] + '}'
-                            return text
-                        df[col] = df[col].apply(replace_brackets)
-                if filename.startswith('oca_appearances'):
-                    if 'appearanceid' in df.columns:
-                        del df['appearanceid']
-                    df['motionsequence'] = df['motionsequence'].astype('Int64')
-                if filename.startswith('oca_judgments'):
-                    df['amendedfromjudgmentsequence'] = df['amendedfromjudgmentsequence'].astype('Int64')
-                if filename.startswith('oca_warrants'):
-                    df['executionstayeddays'] = df['executionstayeddays'].astype('Int64')
-                    df['issuancestayeddays'] = df['issuancestayeddays'].astype('Int64')
-                df.to_csv(file_path, index=False)
-
-    preprocess_csvs(pub_dir)
+    preprocess_staging_csv_dir(pub_dir, chunk_size=csv_preprocess_chunk_size)
     public_files = [i for i in os.listdir(pub_dir) if i.endswith('.csv')]
     with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
         files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args), repeat(s3_prefix))
         pool.starmap(upload_public_file, files_zip)
 
 
-def import_and_promote_staging(
-    manifest, db, pub_dir, s3_args, s3_prefix, selection, csv_row_check_chunk_size
-):
+def import_and_promote_staging(manifest, db, pub_dir, s3_args, s3_prefix, selection):
     staging_tables = [t + '_staging' for t in OCA_TABLES]
     manifest.upsert_step('promote_staging', 'running')
     db.execute_sql_file('create_tables_staging.sql')
     for t in staging_tables:
         csv_filepath = os.path.join(pub_dir, f"{t}.csv")
-        if csv_has_rows(csv_filepath, chunk_size=csv_row_check_chunk_size):
+        if csv_has_rows(csv_filepath):
             columns = ''
             if t == 'oca_appearances_staging':
                 columns = 'indexnumberid, appearancedatetime, appearancepurpose, appearancereason, appearancepart, motionsequence, appearanceoutcomes'
@@ -203,6 +175,7 @@ def import_and_promote_staging(
             );
             """)
 
+    db.execute_sql_file('normalize_staging_after_import.sql')
     db.execute_sql_file('update_appearance_outcomes.sql')
     insert_staging_to_main(db, OCA_TABLES)
     db.execute_sql_file('update_metadata.sql')
