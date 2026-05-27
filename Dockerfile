@@ -1,10 +1,11 @@
-FROM --platform=linux/amd64 python:3.12-slim-bookworm
+FROM --platform=linux/amd64 python:3.12.13-slim-trixie
 ENV TZ=America/New_York
 
 # Update package lists and setup Python with uv
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
-    openssh-client curl ca-certificates python3 unzip && \
+    openssh-client curl ca-certificates unzip && \
     rm -rf /var/lib/apt/lists/*
 ADD https://astral.sh/uv/install.sh /uv-installer.sh
 RUN sh /uv-installer.sh && rm /uv-installer.sh

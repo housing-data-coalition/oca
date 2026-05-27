@@ -17,8 +17,8 @@ dependencies = [
     "python-dotenv>=1.1.0",
     "python-geosupport>=1.1.0",
     "requests>=2.32.4",
-    "requests-toolbelt==0.10.1",
+    "requests-toolbelt>=1.0.0",
     "sqlalchemy>=2.0.41",
-    "urllib3==1.26.15",
+    "urllib3>=2.6.0",
     "usaddress>=0.5.14",
 ]

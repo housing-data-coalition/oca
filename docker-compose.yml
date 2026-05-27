@@ -6,6 +6,15 @@ services:
     user: 'root'
     volumes:
       - .:/app
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
+      SFTP_HOST: ${SFTP_HOST}
+      SFTP_USER: ${SFTP_USER}
+      SFTP_PSWD: ${SFTP_PSWD}
+      SFTP_DIR: ${SFTP_DIR}
     # to debug in the container uncomment below
     # then use use > docker compose up -d 
     # > docker compose exec app /bin/bash
