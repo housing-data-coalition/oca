@@ -70,6 +70,11 @@ class Database:
             curs.execute(SQL)
             return curs.fetchall()
 
+    def sql_fetch_all_from_file(self, sql_file):
+        file_path = os.path.join(os.path.dirname(__file__), 'sql', sql_file)
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return self.sql_fetch_all(f.read())
+
     def insert_rows(self, rows, table_name):
         """
         Inserts many rows, all in the same transaction.

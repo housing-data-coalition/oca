@@ -1,13 +1,8 @@
-import functools
 import multiprocessing
 import os
 import re
 import zipfile
 from itertools import repeat
-from pathlib import Path
-
-import numpy as np
-import pandas as pd
 from lxml import etree
 
 from .etl_constants import DATA_FILENAME, OCA_TABLES, S3_PRIVATE_FOLDER, S3_PUBLIC_FOLDER
@@ -25,7 +20,11 @@ from .etl_helpers import (
     s3_key,
     upload_public_file,
 )
-from .geocode_record import geocode_record, geocode_using_census_batch
+from .etl_geocode import (
+    fetch_addresses_needing_geocode,
+    geocode_candidate_records,
+    upsert_geocoded_addresses,
+)
 from .parsers import oca_tag, parse_file
 
 
@@ -205,23 +204,18 @@ def geocode_and_publish_addresses(
     geocode_workers, census_batch_chunk_size
 ):
     manifest.upsert_step('geocode_refresh', 'running')
+    candidates = fetch_addresses_needing_geocode(db)
+    print(f'Geocoding {len(candidates)} addresses missing lat/lon')
+    geocoded_rows = geocode_candidate_records(
+        candidates,
+        geocode_workers,
+        census_batch_chunk_size,
+        pub_dir,
+    )
+    upsert_geocoded_addresses(db, geocoded_rows)
+
     csv_filepath = os.path.join(pub_dir, "oca_addresses_private.csv")
     db.export_csv('oca_addresses', csv_filepath)
-    input_csv = Path(pub_dir) / 'oca_addresses_private.csv'
-    output_csv = Path(pub_dir) / 'oca_addresses_private.csv'
-    df = pd.read_csv(input_csv, dtype=str, index_col=False, usecols=lambda x: x, keep_default_na=False)
-    df_1 = df[((pd.isna(df['lat'])) | (df['lat'] == '')) & ((df['house_number'] != '') | (pd.notna(df['house_number'])))].copy().reset_index()
-    records = df_1.to_dict('records')
-    with multiprocessing.Pool(processes=min((geocode_workers, multiprocessing.cpu_count()))) as pool:
-        it = pd.DataFrame(pool.map(functools.partial(geocode_record, addr_cols=['street1', 'city', 'postalcode']), records, 10000))
-    df_2 = it[(((pd.isna(it['lat'])) | (it['lat'] == '')))].copy().reset_index()
-    with multiprocessing.Pool(processes=min([5, multiprocessing.cpu_count()])) as pool:
-        chunk_size = census_batch_chunk_size
-        data_split = zip(np.split(df_2, range(chunk_size, df_2.shape[0], chunk_size)), repeat(pub_dir))
-        it_2 = pd.concat(pool.starmap(geocode_using_census_batch, data_split))
-    export_cols = ['indexnumberid', 'street1', 'street2', 'city', 'state', 'postalcode', 'status', 'house_number', 'street_name', 'borough_code', 'place_name', 'sname', 'hnum', 'boro', 'lat', 'bin', 'bbl', 'cd', 'ct', 'council', 'grc', 'grc2', 'msg', 'msg2', 'lon', 'zip_code']
-    concat = pd.concat([df, it, it_2], ignore_index=True).drop_duplicates(subset=['indexnumberid'], ignore_index=True, keep='last')[export_cols]
-    pd.DataFrame(concat).to_csv(output_csv, index=False)
     create_date_files(s3, selection.selected_zip_files[-1], pub_dir)
     public_files = [i for i in os.listdir(pub_dir) if i in ('last-updated-shield.png', 'last-updated-date.txt', 'oca_addresses_private.csv')]
     with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
@@ -230,15 +224,6 @@ def geocode_and_publish_addresses(
     for f in os.listdir(priv_dir):
         if f != '.DS_Store':
             s3.upload_file(s3_key(f"{S3_PRIVATE_FOLDER}/{f}", s3_prefix), os.path.join(priv_dir, f))
-    db.execute_sql_file('reset_addresses_table.sql')
-    db.sql(f"""
-        SET statement_timeout = '2000000';
-        SELECT aws_s3.table_import_from_s3(
-        'oca_addresses', '', '(FORMAT CSV, HEADER)',
-        aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses_private.csv", s3_prefix)}', 'us-east-1'),
-        aws_commons.create_aws_credentials('{s3_args["aws_id"]}', '{s3_args["aws_key"]}', '')
-    );
-    """)
     db.execute_sql_file('create_addresses_views.sql')
     db.sql(f"""
             SELECT * from aws_s3.query_export_to_s3(
