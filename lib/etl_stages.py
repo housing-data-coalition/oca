@@ -20,6 +20,13 @@ from .etl_helpers import (
     upload_public_file,
 )
 from .etl_promotion import promote_staging_to_main
+from .etl_publish import (
+    ADDRESS_VIEW_EXPORTS,
+    export_table_to_s3,
+    normalize_published_s3_encryption,
+    should_publish_address_exports,
+    staging_tables_with_rows,
+)
 from .etl_geocode import (
     fetch_addresses_needing_geocode,
     geocode_candidate_records,
@@ -157,6 +164,7 @@ def preprocess_and_upload_staging_csvs(
 
 
 def import_and_promote_staging(manifest, db, pub_dir, s3_args, s3_prefix, selection):
+    imported_staging_tables = staging_tables_with_rows(pub_dir)
     staging_tables = [t + '_staging' for t in OCA_TABLES]
     manifest.upsert_step('promote_staging', 'running')
     db.execute_sql_file('create_tables_staging.sql')
@@ -182,26 +190,33 @@ def import_and_promote_staging(manifest, db, pub_dir, s3_args, s3_prefix, select
         source = 'sftp' if selected_name in selection.new_file_set else 's3_private'
         manifest.upsert_file(selected_name, source=source, status='completed', stage='promote')
     manifest.upsert_step('promote_staging', 'completed')
+    return imported_staging_tables
 
 
 def publish_core_tables(manifest, db, s3_args, s3_prefix):
+    """
+    Export all core tables after promotion.
+
+    When oca_index_staging has rows, promotion deletes child rows for the batch
+    even if a child staging CSV was empty, so per-table skip is unsafe.
+    """
     manifest.upsert_step('publish_tables', 'running')
+    published_keys = []
     for t in OCA_TABLES:
         s3_filename = t + '.csv'
         if t == "oca_addresses":
             s3_filename = "oca_addresses_private.csv"
-        db.sql(f"""
-                SELECT * from aws_s3.query_export_to_s3(
-                    'SELECT * from {t}',
-                    aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/{s3_filename}", s3_prefix)}', 'us-east-1'),
-                    options :='FORMAT CSV, HEADER');
-                """)
+        published_keys.append(
+            export_table_to_s3(db, t, s3_filename, s3_args, s3_prefix)
+        )
     manifest.upsert_step('publish_tables', 'completed')
+    return published_keys
 
 
 def geocode_and_publish_addresses(
     manifest, db, s3, priv_dir, pub_dir, s3_args, s3_prefix, mode, selection,
-    geocode_workers, census_batch_chunk_size
+    geocode_workers, census_batch_chunk_size, staging_tables_with_data,
+    published_core_keys
 ):
     manifest.upsert_step('geocode_refresh', 'running')
     candidates = fetch_addresses_needing_geocode(db)
@@ -214,42 +229,40 @@ def geocode_and_publish_addresses(
     )
     upsert_geocoded_addresses(db, geocoded_rows)
 
-    csv_filepath = os.path.join(pub_dir, "oca_addresses_private.csv")
-    db.export_csv('oca_addresses', csv_filepath)
+    publish_addresses = should_publish_address_exports(
+        staging_tables_with_data, len(candidates)
+    )
+    published_keys = list(published_core_keys or [])
+    if publish_addresses:
+        csv_filepath = os.path.join(pub_dir, "oca_addresses_private.csv")
+        db.export_csv('oca_addresses', csv_filepath)
+        db.execute_sql_file('create_addresses_views.sql')
+        for view_name, s3_filename in ADDRESS_VIEW_EXPORTS:
+            published_keys.append(
+                export_table_to_s3(db, view_name, s3_filename, s3_args, s3_prefix)
+            )
+        published_keys.append(
+            s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses_private.csv", s3_prefix)
+        )
+    else:
+        print(
+            'Skipping address CSV/view publish: no geocode candidates and '
+            'no oca_addresses_staging rows this run'
+        )
+
     create_date_files(s3, selection.selected_zip_files[-1], pub_dir)
-    public_files = [i for i in os.listdir(pub_dir) if i in ('last-updated-shield.png', 'last-updated-date.txt', 'oca_addresses_private.csv')]
+    public_files = ['last-updated-shield.png', 'last-updated-date.txt']
+    if publish_addresses:
+        public_files.append('oca_addresses_private.csv')
     with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
         files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args), repeat(s3_prefix))
         pool.starmap(upload_public_file, files_zip)
+    for date_file in public_files:
+        published_keys.append(s3_key(f"{S3_PUBLIC_FOLDER}/{date_file}", s3_prefix))
+
     for f in os.listdir(priv_dir):
         if f != '.DS_Store':
             s3.upload_file(s3_key(f"{S3_PRIVATE_FOLDER}/{f}", s3_prefix), os.path.join(priv_dir, f))
-    db.execute_sql_file('create_addresses_views.sql')
-    db.sql(f"""
-            SELECT * from aws_s3.query_export_to_s3(
-                'SELECT * from oca_addresses_with_bbl',
-                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses_with_bbl.csv", s3_prefix)}', 'us-east-1'),
-                options :='FORMAT CSV, HEADER');
-        """)
-    db.sql(f"""
-            SELECT * from aws_s3.query_export_to_s3(
-                'SELECT * from oca_addresses_with_ct',
-                aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses_with_ct.csv", s3_prefix)}', 'us-east-1'),
-                options :='FORMAT CSV, HEADER');
-        """)
-    db.sql(f"""
-        SELECT * from aws_s3.query_export_to_s3(
-            'SELECT * from oca_addresses_public',
-            aws_commons.create_s3_uri('{s3_args["aws_bucket_name"]}', '{s3_key(f"{S3_PUBLIC_FOLDER}/oca_addresses.csv", s3_prefix)}', 'us-east-1'),
-            options :='FORMAT CSV, HEADER');
-    """)
-    print('Updating server-side encryption for S3 files')
-    public_folder = s3_key(S3_PUBLIC_FOLDER, s3_prefix)
-    public_files_to_encrypt = [
-        f for f in s3.list_files('', public_folder)
-        if not f.endswith('_staging.csv') and 'oca_addresses_private' not in f
-    ]
-    for f in public_files_to_encrypt:
-        print('-', f)
-        s3.update_encryption(s3_key(f"{S3_PUBLIC_FOLDER}/{f}", s3_prefix))
+
+    normalize_published_s3_encryption(s3, s3_prefix, published_keys)
     manifest.upsert_step('geocode_refresh', 'completed')

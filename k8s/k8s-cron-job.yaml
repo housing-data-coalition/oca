@@ -1,0 +1,52 @@
+# Weekly OCA ETL (Saturday 12:00 US/Eastern). See docs/operations/weekly-etl-scheduling.md
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: oca-etl
+spec:
+  schedule: "0 12 * * 6"
+  timeZone: America/New_York
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: oca-etl
+            image: justfixnyc/oca:latest
+            imagePullPolicy: Always
+            command:
+            - python
+            - oca_update.py
+            # ~2GB class: Geosupport + DuckDB staging + geocode pools
+            resources:
+              requests:
+                memory: "1536Mi"
+                cpu: "500m"
+              limits:
+                memory: "2Gi"
+                cpu: "2"
+            envFrom:
+            - secretRef:
+                name: oca-etl-secrets
+            env:
+            - name: MODE
+              value: "2"
+            # Tune down if geocode OOMs near the 2Gi limit
+            - name: GEOCODE_WORKERS
+              value: "2"
+            - name: CENSUS_BATCH_CHUNK_SIZE
+              value: "2500"
+            - name: CSV_ROW_CHECK_CHUNK_SIZE
+              value: "1000"
+            # Production: leave empty. Refactor/E2E: set e.g. refactor/
+            - name: S3_PREFIX
+              value: ""
+            - name: DB_SCHEMA
+              value: ""
+            - name: REPROCESS_GLOB
+              value: ""
+            - name: FORCE_REPROCESS
+              value: "false"

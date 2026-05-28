@@ -1,0 +1,165 @@
+# Weekly OCA ETL scheduling and deployment
+
+The OCA pipeline ingests new SFTP XML zip files weekly, promotes staging data in PostgreSQL, geocodes addresses incrementally, and publishes CSVs to S3 via `aws_s3`. All three supported schedulers run the same container entrypoint:
+
+```bash
+python oca_update.py
+```
+
+Use Docker (or the published image `justfixnyc/oca:latest`) with credentials supplied via environment variables or a secret store. See [Runtime controls](#runtime-controls) and the root [README](../../README.md).
+
+## Runtime controls
+
+| Variable | Purpose | Production default |
+|----------|---------|-------------------|
+| `MODE` | Publish mode (`2` = full S3 publish) | `2` |
+| `DATABASE_URL` | PostgreSQL connection (RDS) | required |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | S3 + RDS `aws_s3` credentials | required (or IAM role on ECS) |
+| `AWS_S3_BUCKET_NAME` | Target bucket | required |
+| `SFTP_*` | OCA SFTP download | required |
+| `DB_SCHEMA` | `search_path` schema (refactor/E2E) | empty → `public` |
+| `S3_PREFIX` | Key prefix for `private/` and `public/` | empty → bucket root |
+| `REPROCESS_GLOB` | Replay zip files from S3 `private/` | empty |
+| `FORCE_REPROCESS` | Replay manifest-completed files | `false` |
+| `GEOCODE_WORKERS` | Geosupport pool size | CPU count |
+| `CENSUS_BATCH_CHUNK_SIZE` | Census batch chunk | `2500` |
+| `CSV_ROW_CHECK_CHUNK_SIZE` | Staging CSV preprocess chunk | `1000` |
+
+Refactor and E2E runs must set `S3_PREFIX=refactor/` (or another isolated prefix) so reads/writes stay out of production public paths.
+
+Memory target: **≤ 2 GiB** per job. Tune `GEOCODE_WORKERS` down (e.g. `2`) if geocoding approaches the limit.
+
+## Publish behavior (Step 6)
+
+- **Core tables:** every table in `OCA_TABLES` is exported after a successful promotion batch. Selective skip per table is unsafe when `oca_index_staging` has rows: promotion deletes child rows for the batch even when a child staging CSV was empty.
+- **Addresses:** when incremental geocode has zero candidates and `oca_addresses_staging` had no rows this run, address CSV/view exports and `create_addresses_views.sql` are skipped.
+- **S3 encryption:** SSE-S3 normalization runs only on objects exported in the current run (not a full public-prefix scan).
+
+## 1. Local Docker + cron (weekly)
+
+Best for a single host with Docker and an `.env` file.
+
+**Weekly schedule example** (Saturdays 12:00 US/Eastern, same cadence as K8s manifest):
+
+```cron
+# /etc/cron.d/oca-etl — adjust path to your clone
+0 12 * * 6 root cd /path/to/oca && /usr/bin/docker compose run --rm \
+  -e MODE=2 \
+  -e GEOCODE_WORKERS=2 \
+  app python oca_update.py >> /var/log/oca-etl.log 2>&1
+```
+
+Ensure `.env` in the repo root defines `DATABASE_URL`, AWS, and SFTP variables (see `.env.example`). Do not commit `.env`.
+
+**Manual run:**
+
+```bash
+docker compose run --rm app python oca_update.py
+```
+
+**Refactor / replay example:**
+
+```bash
+docker compose run --rm app env \
+  DB_SCHEMA=oca_refactor \
+  S3_PREFIX=refactor/ \
+  REPROCESS_GLOB='LandlordTenant.Incr.2025-*.zip' \
+  FORCE_REPROCESS=true \
+  GEOCODE_WORKERS=2 \
+  python oca_update.py
+```
+
+## 2. Kubernetes CronJob (weekly)
+
+Manifest: [`k8s/k8s-cron-job.yaml`](../../k8s/k8s-cron-job.yaml).
+
+**Schedule:** `0 12 * * 6` with `timeZone: America/New_York` (weekly Saturday noon).
+
+**Memory:** requests `1536Mi`, limit `2Gi` (2 GB class).
+
+**Secrets:** create `oca-etl-secrets` before applying the CronJob (see [`k8s/oca-etl-secret.example.yaml`](../../k8s/oca-etl-secret.example.yaml)).
+
+```bash
+kubectl apply -f k8s/oca-etl-secret.example.yaml   # after editing placeholders
+kubectl apply -f k8s/k8s-cron-job.yaml
+kubectl get cronjob oca-etl
+```
+
+Non-secret runtime knobs are set inline in the CronJob (`MODE`, `GEOCODE_WORKERS`, etc.). Override `DB_SCHEMA` / `S3_PREFIX` there for refactor jobs.
+
+**One-off job from the CronJob template:**
+
+```bash
+kubectl create job --from=cronjob/oca-etl oca-etl-manual-$(date +%s)
+kubectl logs -f job/oca-etl-manual-<timestamp>
+```
+
+## 3. AWS EventBridge + ECS Fargate (weekly, non-Kubernetes)
+
+Use when production runs on AWS without a cluster. EventBridge starts an ECS task on a schedule; the task uses the same image and command as Docker/K8s.
+
+**High-level steps**
+
+1. Push `justfixnyc/oca:latest` (or your ECR mirror) and register a Fargate task definition with:
+   - `command`: `["python", "oca_update.py"]`
+   - `memory`: `2048` (hard limit, MiB)
+   - `cpu`: `1024` (1 vCPU; adjust if needed)
+   - Secrets from AWS Secrets Manager or SSM Parameter Store → container environment (same keys as `.env.example`)
+   - Task role: S3 access for the bucket; execution role: ECR pull + secrets
+2. Create an ECS cluster and service is optional; scheduled tasks can run standalone.
+3. EventBridge rule (weekly Saturday 12:00 ET):
+
+```json
+{
+  "scheduleExpression": "cron(0 12 ? * SAT *)",
+  "scheduleExpressionTimezone": "America/New_York",
+  "state": "ENABLED",
+  "targets": [{
+    "Arn": "arn:aws:ecs:us-east-1:ACCOUNT_ID:cluster/oca-etl",
+    "RoleArn": "arn:aws:iam::ACCOUNT_ID:role/EventBridgeECSRunTask",
+    "EcsParameters": {
+      "TaskDefinitionArn": "arn:aws:ecs:us-east-1:ACCOUNT_ID:task-definition/oca-etl:1",
+      "LaunchType": "FARGATE",
+      "NetworkConfiguration": {
+        "awsvpcConfiguration": {
+          "subnets": ["subnet-xxx"],
+          "securityGroups": ["sg-xxx"],
+          "assignPublicIp": "DISABLED"
+        }
+      }
+    }
+  }]
+}
+```
+
+Replace ARNs, subnets, and security groups. The task needs outbound HTTPS (SFTP, Census geocoder, S3, RDS) and RDS connectivity from the task subnets.
+
+**Environment example (task definition fragment):**
+
+```json
+"environment": [
+  { "name": "MODE", "value": "2" },
+  { "name": "GEOCODE_WORKERS", "value": "2" },
+  { "name": "CENSUS_BATCH_CHUNK_SIZE", "value": "2500" },
+  { "name": "CSV_ROW_CHECK_CHUNK_SIZE", "value": "1000" }
+],
+"secrets": [
+  { "name": "DATABASE_URL", "valueFrom": "arn:aws:secretsmanager:us-east-1:ACCOUNT:secret:oca-etl:DATABASE_URL::" },
+  { "name": "AWS_ACCESS_KEY_ID", "valueFrom": "..." }
+]
+```
+
+On ECS, prefer IAM task roles for S3 instead of long-lived access keys when RDS `aws_s3` integration allows it.
+
+## Validation checklist
+
+- [ ] `docker compose run --rm app python -m unittest discover -s tests -p "test_*.py"`
+- [ ] CronJob or ECS task memory limit ≤ 2 GiB; geocode workers tuned if OOM
+- [ ] Secrets not stored in git-tracked manifests (use K8s Secret / Secrets Manager)
+- [ ] Refactor runs use `S3_PREFIX=refactor/` (or dedicated prefix)
+
+## Related files
+
+- [`k8s/k8s-cron-job.yaml`](../../k8s/k8s-cron-job.yaml) — CronJob, resources, env
+- [`k8s/oca-etl-secret.example.yaml`](../../k8s/oca-etl-secret.example.yaml) — secret template
+- [`README.md`](../../README.md) — local setup and runtime controls

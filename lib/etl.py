@@ -119,11 +119,14 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args, runtime_args=None
             staging_db, pub_dir, mode, s3_args, s3_prefix,
             csv_preprocess_chunk_size=csv_row_check_chunk_size,
         )
-        import_and_promote_staging(manifest, db, pub_dir, s3_args, s3_prefix, selection)
-        publish_core_tables(manifest, db, s3_args, s3_prefix)
+        staging_tables_with_data = import_and_promote_staging(
+            manifest, db, pub_dir, s3_args, s3_prefix, selection
+        )
+        published_core_keys = publish_core_tables(manifest, db, s3_args, s3_prefix)
         geocode_and_publish_addresses(
             manifest, db, s3, priv_dir, pub_dir, s3_args, s3_prefix, mode, selection,
-            geocode_workers, census_batch_chunk_size
+            geocode_workers, census_batch_chunk_size,
+            staging_tables_with_data, published_core_keys,
         )
 
         manifest.mark_run_completed(

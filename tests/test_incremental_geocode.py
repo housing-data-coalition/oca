@@ -249,7 +249,10 @@ class GeocodeStageIntegrationTests(unittest.TestCase):
 
         with mock.patch('lib.etl_stages.create_date_files'), \
              mock.patch('lib.etl_stages.upload_public_file'), \
+             mock.patch('lib.etl_stages.multiprocessing.Pool') as pool_mock, \
+             mock.patch('lib.etl_stages.normalize_published_s3_encryption'), \
              mock.patch('os.listdir', return_value=[]):
+            pool_mock.return_value.__enter__.return_value.starmap.return_value = []
             geocode_and_publish_addresses(
                 fake_manifest,
                 fake_db,
@@ -262,6 +265,8 @@ class GeocodeStageIntegrationTests(unittest.TestCase):
                 selection,
                 geocode_workers=1,
                 census_batch_chunk_size=2500,
+                staging_tables_with_data=set(),
+                published_core_keys=[],
             )
 
         executed_files = [
@@ -292,7 +297,10 @@ class GeocodeStageIntegrationTests(unittest.TestCase):
              mock.patch('lib.etl_stages.upsert_geocoded_addresses', return_value=1) as upsert_mock, \
              mock.patch('lib.etl_stages.create_date_files'), \
              mock.patch('lib.etl_stages.upload_public_file'), \
+             mock.patch('lib.etl_stages.multiprocessing.Pool') as pool_mock, \
+             mock.patch('lib.etl_stages.normalize_published_s3_encryption'), \
              mock.patch('os.listdir', return_value=[]):
+            pool_mock.return_value.__enter__.return_value.starmap.return_value = []
             geocode_and_publish_addresses(
                 fake_manifest,
                 fake_db,
@@ -305,6 +313,8 @@ class GeocodeStageIntegrationTests(unittest.TestCase):
                 selection,
                 geocode_workers=2,
                 census_batch_chunk_size=1000,
+                staging_tables_with_data={'oca_addresses'},
+                published_core_keys=[],
             )
 
         geocode_mock.assert_called_once()

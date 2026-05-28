@@ -66,6 +66,16 @@ To run the whole process in the docker container run:
 docker-compose up 
 ```
 
+### Weekly scheduling and Kubernetes
+
+See [`docs/operations/weekly-etl-scheduling.md`](docs/operations/weekly-etl-scheduling.md) for:
+
+- local Docker + **cron** (weekly example),
+- **Kubernetes CronJob** (`k8s/k8s-cron-job.yaml`, 2Gi memory limit, secrets via `oca-etl-secrets`),
+- **AWS EventBridge + ECS Fargate** (weekly task schedule).
+
+Create cluster secrets from [`k8s/oca-etl-secret.example.yaml`](k8s/oca-etl-secret.example.yaml); do not commit real credentials.
+
 ### Runtime controls (Step 1 refactor)
 
 These optional variables let operators isolate schema/data paths and tune memory-sensitive parts of the run. If omitted, behavior remains the same as before (new files only, default schema/search path, default worker/chunk values).
