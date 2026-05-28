@@ -28,6 +28,9 @@ def parse_args():
 	parser.add_argument('--geocode-workers', type=int, default=parse_optional_int(os.environ.get('GEOCODE_WORKERS')), help='Worker process count for geocode pool')
 	parser.add_argument('--census-batch-chunk-size', type=int, default=int(os.environ.get('CENSUS_BATCH_CHUNK_SIZE', '2500')), help='Chunk size for census batch geocoder input')
 	parser.add_argument('--csv-row-check-chunk-size', type=int, default=int(os.environ.get('CSV_ROW_CHECK_CHUNK_SIZE', '1000')), help='Chunk size used for constant-memory CSV non-empty checks')
+	parser.add_argument('--parse-write-batch-enabled', action='store_true', default=parse_bool(os.environ.get('PARSE_WRITE_BATCH_ENABLED', '1')), help='Buffer parser DuckDB writes and flush in transaction windows')
+	parser.add_argument('--parse-write-batch-size', type=int, default=int(os.environ.get('PARSE_WRITE_BATCH_SIZE', '128')), help='Max buffered INSERT statements before flush')
+	parser.add_argument('--parse-write-flush-every-n-cases', type=int, default=int(os.environ.get('PARSE_WRITE_FLUSH_EVERY_N_CASES', '16')), help='Flush buffered writes after this many cases per worker')
 	return parser.parse_args()
 
 def main():
@@ -56,6 +59,10 @@ def main():
 	remote_db_args = {
 		'db_url': os.environ.get('CLONED_DATABASE_URL', '')
 	}
+
+	os.environ['PARSE_WRITE_BATCH_ENABLED'] = '1' if args.parse_write_batch_enabled else '0'
+	os.environ['PARSE_WRITE_BATCH_SIZE'] = str(args.parse_write_batch_size)
+	os.environ['PARSE_WRITE_FLUSH_EVERY_N_CASES'] = str(args.parse_write_flush_every_n_cases)
 
 	runtime_args = {
 		'db_schema': args.db_schema,

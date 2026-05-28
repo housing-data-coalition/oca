@@ -181,6 +181,8 @@ def run_full_baseline(
     output_dir: str,
     profiles: list[str] | None = None,
     iterations: int = 2,
+    task_label: str = 'task1_baseline',
+    json_filename: str | None = None,
 ) -> dict[str, Any]:
     """Materialize fixtures (if needed), run all profiles, write JSON + markdown report."""
     import json
@@ -204,24 +206,26 @@ def run_full_baseline(
     report = {
         'generated_at': datetime.now(timezone.utc).isoformat(),
         'option': 'A',
-        'task': 'task1_baseline',
+        'task': task_label,
         'profiles': results,
     }
 
-    json_path = os.path.join(output_dir, 'task1_baseline_metrics.json')
+    json_name = json_filename or f'{task_label}_metrics.json'
+    json_path = os.path.join(output_dir, json_name)
     with open(json_path, 'w', encoding='utf-8') as f:
         json.dump(report, f, indent=2)
 
-    md_path = os.path.join(output_dir, 'task1_baseline_metrics.md')
-    _write_markdown_report(md_path, report)
+    md_name = json_name.replace('.json', '.md')
+    md_path = os.path.join(output_dir, md_name)
+    _write_markdown_report(md_path, report, title=task_label.replace('_', ' ').title())
 
     report['artifacts'] = {'json': json_path, 'markdown': md_path}
     return report
 
 
-def _write_markdown_report(path: str, report: dict[str, Any]) -> None:
+def _write_markdown_report(path: str, report: dict[str, Any], *, title: str = 'Task 1 baseline metrics (Option A)') -> None:
     lines = [
-        '# Task 1 baseline metrics (Option A)',
+        f'# {title} (Option A)',
         '',
         f"Generated: {report['generated_at']}",
         '',
@@ -297,6 +301,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--profiles', nargs='+', choices=list(SAMPLE_PROFILES.keys()), default=None)
     parser.add_argument('--iterations', type=int, default=2)
     parser.add_argument('--fixtures-dir', default=None)
+    parser.add_argument(
+        '--task-label',
+        default=os.environ.get('OCA_BENCHMARK_TASK', 'task1_baseline'),
+        help='Report task label (e.g. task2_batched_writes)',
+    )
+    parser.add_argument(
+        '--json-filename',
+        default=None,
+        help='Override JSON output filename (default: <task-label>_metrics.json)',
+    )
     args = parser.parse_args(argv)
 
     run_full_baseline(
@@ -304,6 +318,8 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=os.path.abspath(args.output_dir),
         profiles=args.profiles,
         iterations=args.iterations,
+        task_label=args.task_label,
+        json_filename=args.json_filename,
     )
     print(f"Wrote baseline artifacts to {os.path.abspath(args.output_dir)}")
     return 0

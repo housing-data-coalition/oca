@@ -31,7 +31,7 @@ class BenchmarkHarnessTests(unittest.TestCase):
             paths = materialize_benchmark_samples(fixtures, profiles=['weekly'])
             # Smaller run for unit test speed
             from lib.benchmark_fixtures import write_benchmark_zip
-            small_zip = os.path.join(fixtures, 'small-weekly.zip')
+            small_zip = os.path.join(fixtures, 'LandlordTenant.Incr.2024-03-08.small.zip')
             write_benchmark_zip(small_zip, 30, child_profile='weekly')
 
             result = run_benchmark_profile(
@@ -51,7 +51,11 @@ class BenchmarkHarnessTests(unittest.TestCase):
             priv = os.path.join(tmp, 'private')
             os.makedirs(priv)
             from lib.benchmark_fixtures import write_benchmark_zip
-            write_benchmark_zip(os.path.join(priv, 'test.zip'), 20, child_profile='weekly')
+            write_benchmark_zip(
+                os.path.join(priv, 'LandlordTenant.Incr.2024-03-08.zip'),
+                20,
+                child_profile='weekly',
+            )
 
             _, checksums_off, rows_off = run_parse_export_preprocess(
                 priv,
@@ -61,7 +65,11 @@ class BenchmarkHarnessTests(unittest.TestCase):
 
             priv2 = os.path.join(tmp, 'private2')
             os.makedirs(priv2)
-            write_benchmark_zip(os.path.join(priv2, 'test.zip'), 20, child_profile='weekly')
+            write_benchmark_zip(
+                os.path.join(priv2, 'LandlordTenant.Incr.2024-03-08.zip'),
+                20,
+                child_profile='weekly',
+            )
             _, checksums_on, rows_on = run_parse_export_preprocess(
                 priv2,
                 metrics=EtlStageMetrics(),

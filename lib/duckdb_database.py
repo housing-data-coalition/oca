@@ -2,6 +2,7 @@ import duckdb
 import os
 import threading
 import time
+from contextlib import contextmanager
 
 from .etl_metrics import EtlStageMetrics, STAGING_TABLE_FAMILIES
 
@@ -49,14 +50,32 @@ class DuckDB:
     def execute(self, sql, params=None):
         """Execute a single SQL statement"""
         with self._lock:
-            if params:
-                return self.conn.execute(sql, params)
-            return self.conn.execute(sql)
-    
+            return self._execute_unlocked(sql, params)
+
+    def _execute_unlocked(self, sql, params=None):
+        if params:
+            return self.conn.execute(sql, params)
+        return self.conn.execute(sql)
+
     def executemany(self, sql, params_list):
         """Execute SQL with multiple parameter sets"""
         with self._lock:
-            return self.conn.executemany(sql, params_list)
+            return self._executemany_unlocked(sql, params_list)
+
+    def _executemany_unlocked(self, sql, params_list):
+        return self.conn.executemany(sql, params_list)
+
+    @contextmanager
+    def transaction(self):
+        """Run a block in one DuckDB transaction (caller should not nest locks)."""
+        with self._lock:
+            self.conn.execute('BEGIN TRANSACTION')
+            try:
+                yield self
+                self.conn.execute('COMMIT')
+            except Exception:
+                self.conn.execute('ROLLBACK')
+                raise
     
     def close(self):
         if self.conn: self.conn.close()
