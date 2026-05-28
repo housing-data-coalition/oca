@@ -26,9 +26,6 @@ A few basic helper functions:
 * `list_new_data_files`
 	* List files that are in the SFTP but not yet in S3
 
-* `prep_db`
-	* Prepare the Postgres database (either from scratch with SQL scripts or from a `pg_dump` file)
-
 * `promote_staging_to_main` (`etl_promotion.py`)
 	* Move newly parsed records in the database over from staging tables to the main ones (single transaction)
 

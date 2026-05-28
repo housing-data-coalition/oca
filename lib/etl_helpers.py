@@ -45,25 +45,6 @@ def csv_has_rows(csv_filepath):
     return False
 
 
-def prep_db(s3, db, local_dir):
-    """ 
-    Create a new directory in the same folder as this file, 
-    deleting everything in the folder if it already exists 
-
-    :param s3: S3 object
-    :param db: Database object
-    :param local_dir: Path for local directory to save database dump file
-    """
-    if s3.list_files('oca.dump', S3_PRIVATE_FOLDER):
-        print('Rebuilding tables from SQL dump')
-        s3.download_file(f"{S3_PRIVATE_FOLDER}/oca.dump", os.path.join(local_dir, 'oca.dump'))
-        db.execute_sql_file('create_tables.sql')
-        db.restore_from(os.path.join(local_dir, 'oca.dump'))
-    else:
-        print('Creating tables from scratch')
-        db.execute_sql_file('create_tables.sql')
-
-
 def create_date_files(data_file, local_dir):
     """
     Create a text file and a custom shield image with date the data was 

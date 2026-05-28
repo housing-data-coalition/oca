@@ -20,7 +20,6 @@ from .etl_helpers import (
     csv_has_rows,
     download_pluto,
     make_dir,
-    prep_db,
     s3_key,
     upload_public_file,
 )
@@ -58,7 +57,6 @@ __all__ = [
     'EtlRunManifest',
     'manifest_step',
     'csv_has_rows',
-    'prep_db',
     'promote_staging_to_main',
     'promotion_table_counts',
     'promotion_counts_checksum',
