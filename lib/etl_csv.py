@@ -2,7 +2,6 @@
 
 import csv
 import os
-import time
 
 from .staging_csv_export import staging_csv_needs_preprocess
 
@@ -64,7 +63,7 @@ def _file_preprocess_rules(filename):
     return drop_columns, int_columns
 
 
-def preprocess_csv_file(file_path, chunk_size=1000, metrics=None):
+def preprocess_csv_file(file_path, chunk_size=1000):
     """
     Rewrite one staging CSV in place using bounded memory.
 
@@ -78,7 +77,6 @@ def preprocess_csv_file(file_path, chunk_size=1000, metrics=None):
     drop_columns, int_columns = _file_preprocess_rules(filename)
     tmp_path = f'{file_path}.tmp'
     rows_touched = 0
-    file_start = time.perf_counter()
 
     with open(file_path, newline='', encoding='utf-8') as infile, open(
         tmp_path, 'w', newline='', encoding='utf-8'
@@ -103,37 +101,16 @@ def preprocess_csv_file(file_path, chunk_size=1000, metrics=None):
             writer.writerows(batch)
 
     os.replace(tmp_path, file_path)
-
-    if metrics is not None and metrics.enabled:
-        metrics.preprocess_rows[filename] = rows_touched
-        metrics.increment('preprocess_csv_files', 1)
-        per_file = metrics.stages.setdefault('csv_preprocess_per_file', {})
-        per_file[filename] = round(time.perf_counter() - file_start, 6)
-
     return rows_touched
 
 
-def preprocess_staging_csv_dir(target_dir, chunk_size=1000, metrics=None):
-    preprocess_start = time.perf_counter()
-    total_rows = 0
+def preprocess_staging_csv_dir(target_dir, chunk_size=1000):
     for filename in sorted(os.listdir(target_dir)):
         if not filename.endswith('.csv'):
             continue
         if not staging_csv_needs_preprocess(filename):
-            if metrics is not None and metrics.enabled:
-                metrics.preprocess_rows[filename] = 0
-                metrics.increment('preprocess_csv_files_skipped', 1)
             continue
-        total_rows += preprocess_csv_file(
+        preprocess_csv_file(
             os.path.join(target_dir, filename),
             chunk_size=chunk_size,
-            metrics=metrics,
-        )
-    if metrics is not None and metrics.enabled:
-        metrics.set_counter('preprocess_rows_total', total_rows)
-        metrics.record_stage(
-            'csv_preprocess',
-            time.perf_counter() - preprocess_start,
-            files_processed=metrics.counters.get('preprocess_csv_files', 0),
-            rows_touched=total_rows,
         )

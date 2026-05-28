@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .duckdb_database import DuckDB
-    from .etl_metrics import EtlStageMetrics
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -47,17 +46,6 @@ class ParseWriteConfig:
         return cls(enabled=False, batch_size=1, flush_every_n_cases=1)
 
 
-@dataclass
-class FlushDiagnostics:
-    """Last flush snapshot for debug / failure analysis (does not affect ETL output)."""
-
-    reason: str
-    delete_count: int
-    insert_count: int
-    cases_in_window: int
-    flush_index: int = 0
-
-
 class StagingWriteBuffer:
     """
     Buffers DELETE + INSERT statements and flushes in transaction windows.
@@ -66,16 +54,13 @@ class StagingWriteBuffer:
     before any queued INSERTs in the same transaction.
     """
 
-    def __init__(self, db: DuckDB, config: ParseWriteConfig, metrics: EtlStageMetrics | None = None):
+    def __init__(self, db: DuckDB, config: ParseWriteConfig):
         self.db = db
         self.config = config
-        self.metrics = metrics
         self._deletes: list[tuple[str, tuple | None]] = []
         self._inserts: dict[str, list[tuple | None]] = {}
         self._cases_in_window = 0
         self._flush_count = 0
-        self.last_flush: FlushDiagnostics | None = None
-        self.flush_history: list[FlushDiagnostics] = []
 
     def _pending_insert_count(self) -> int:
         return sum(len(rows) for rows in self._inserts.values())
@@ -98,10 +83,6 @@ class StagingWriteBuffer:
             self._cases_in_window = 0
             return
 
-        delete_count = len(self._deletes)
-        insert_count = self._pending_insert_count()
-        cases_in_window = self._cases_in_window
-
         with self.db.transaction():
             for sql, params in self._deletes:
                 self.db._execute_unlocked(sql, params)
@@ -114,38 +95,16 @@ class StagingWriteBuffer:
                     self.db._executemany_unlocked(sql, params_list)
 
         self._flush_count += 1
-        diag = FlushDiagnostics(
-            reason=reason,
-            delete_count=delete_count,
-            insert_count=insert_count,
-            cases_in_window=cases_in_window,
-            flush_index=self._flush_count,
-        )
-        self.last_flush = diag
-        if _flush_debug_enabled():
-            self.flush_history.append(diag)
-            print(
-                f'parse_write_flush #{diag.flush_index} reason={reason} '
-                f'deletes={delete_count} inserts={insert_count} cases_in_window={cases_in_window}'
-            )
-
-        if self.metrics and self.metrics.enabled:
-            self.metrics.increment('parse_write_flushes', 1)
-            self.metrics.increment('parse_write_buffered_deletes', delete_count)
-            self.metrics.increment('parse_write_buffered_inserts', insert_count)
-            if reason == 'parse_error':
-                self.metrics.increment('parse_write_flush_on_error', 1)
-
         self._deletes.clear()
         self._inserts.clear()
         self._cases_in_window = 0
 
 
-def attach_write_buffer(db: DuckDB, metrics: EtlStageMetrics | None = None) -> StagingWriteBuffer | None:
+def attach_write_buffer(db: DuckDB) -> StagingWriteBuffer | None:
     config = ParseWriteConfig.from_env()
     if not config.enabled:
         return None
-    buffer = StagingWriteBuffer(db, config, metrics=metrics)
+    buffer = StagingWriteBuffer(db, config)
     db.write_buffer = buffer
     return buffer
 
@@ -161,10 +120,6 @@ def staging_execute(db: DuckDB, sql: str, params: tuple | None = None) -> Any:
         return None
     buffer.queue_insert(sql, params)
     return None
-
-
-def _flush_debug_enabled() -> bool:
-    return _env_bool('PARSE_WRITE_FLUSH_DEBUG', False)
 
 
 def flush_write_buffer(db: DuckDB, reason: str = 'shutdown') -> None:

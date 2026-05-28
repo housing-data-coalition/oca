@@ -13,7 +13,6 @@ from .etl_file_selection import (
 )
 from .etl_run_manifest import completed_reprocess_files
 from .etl_csv import preprocess_staging_csv_dir
-from .etl_metrics import EtlStageMetrics, metrics_enabled_from_env
 from .etl_helpers import (
     create_date_files,
     csv_has_rows,
@@ -122,11 +121,7 @@ def download_selected_files(manifest, sftp, s3, priv_dir, s3_prefix, selection):
     manifest.upsert_step('download_files', 'completed')
 
 
-def parse_xml_to_staging(manifest, staging_db, priv_dir, metrics=None, parse_num_threads=8):
-    metrics = metrics if metrics is not None else getattr(staging_db, 'metrics', None)
-    if metrics is None and metrics_enabled_from_env():
-        metrics = EtlStageMetrics()
-
+def parse_xml_to_staging(manifest, staging_db, priv_dir, parse_num_threads=8):
     def sort_by_date(file):
         r = re.search(r'(\d+.+)\.zip', file).group(0).replace('.', ' ')
         return r
@@ -139,45 +134,33 @@ def parse_xml_to_staging(manifest, staging_db, priv_dir, metrics=None, parse_num
     manifest.upsert_step('parse_xml', 'running')
     staging_db.execute_sql_file('lib/sql/create_tables_staging_duckdb.sql')
     print('Processing files:')
-    stage_ctx = metrics.stage('parse_xml') if metrics and metrics.enabled else _null_context()
-    with stage_ctx:
-        for zip_file in local_zip_files:
-            file_name = os.path.basename(zip_file)
-            manifest.upsert_file(file_name, source='local', status='processing', stage='parse')
-            extract_date = None
-            with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
-                for _, elem in etree.iterparse(xml_file, tag=oca_tag('RunDate')):
-                    if not extract_date:
-                        extract_date = elem.text
-                        break
-            with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
-                parse_file(
-                    xml_file,
-                    staging_db,
-                    extract_date,
-                    num_threads=parse_num_threads,
-                    metrics=metrics,
-                )
-            manifest.upsert_file(
-                file_name, source='local', status='parsed', stage='parse',
-                details={'extract_date': extract_date}
+    for zip_file in local_zip_files:
+        file_name = os.path.basename(zip_file)
+        manifest.upsert_file(file_name, source='local', status='processing', stage='parse')
+        extract_date = None
+        with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
+            for _, elem in etree.iterparse(xml_file, tag=oca_tag('RunDate')):
+                if not extract_date:
+                    extract_date = elem.text
+                    break
+        with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
+            parse_file(
+                xml_file,
+                staging_db,
+                extract_date,
+                num_threads=parse_num_threads,
             )
-    if metrics and metrics.enabled:
-        from .duckdb_database import fetch_staging_row_counts
-        metrics.row_counts.update(fetch_staging_row_counts(staging_db))
+        manifest.upsert_file(
+            file_name, source='local', status='parsed', stage='parse',
+            details={'extract_date': extract_date}
+        )
     manifest.upsert_step('parse_xml', 'completed')
-
-
-def _null_context():
-    from contextlib import nullcontext
-    return nullcontext()
 
 
 def export_staging_to_csv(
     staging_db,
     pub_dir,
     *,
-    metrics=None,
     csv_preprocess_chunk_size=1000,
     upload=True,
     mode=None,
@@ -185,16 +168,8 @@ def export_staging_to_csv(
     s3_prefix=None,
 ):
     """Export DuckDB staging tables to CSV and optionally preprocess + upload."""
-    metrics = metrics if metrics is not None else getattr(staging_db, 'metrics', None)
-    if metrics is None and metrics_enabled_from_env():
-        metrics = EtlStageMetrics()
-    if metrics and metrics.enabled and metrics is not getattr(staging_db, 'metrics', None):
-        staging_db.metrics = metrics
-
     staging_db.export_tables_to_csv(output_dir=pub_dir)
-    preprocess_staging_csv_dir(
-        pub_dir, chunk_size=csv_preprocess_chunk_size, metrics=metrics
-    )
+    preprocess_staging_csv_dir(pub_dir, chunk_size=csv_preprocess_chunk_size)
 
     if not upload:
         return
@@ -206,12 +181,11 @@ def export_staging_to_csv(
 
 
 def preprocess_and_upload_staging_csvs(
-    staging_db, pub_dir, mode, s3_args, s3_prefix, csv_preprocess_chunk_size=1000, metrics=None
+    staging_db, pub_dir, mode, s3_args, s3_prefix, csv_preprocess_chunk_size=1000
 ):
     export_staging_to_csv(
         staging_db,
         pub_dir,
-        metrics=metrics,
         csv_preprocess_chunk_size=csv_preprocess_chunk_size,
         upload=True,
         mode=mode,

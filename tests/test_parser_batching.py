@@ -6,7 +6,7 @@ import zipfile
 
 from lxml import etree
 
-from lib.benchmark_fixtures import build_case_xml, build_extract_xml
+from parser_xml_fixtures import build_case_xml, build_extract_xml, write_test_zip
 from lib.duckdb_database import DuckDB, fetch_staging_row_counts
 from lib.etl_constants import DATA_FILENAME
 from lib.parse_write_buffer import ParseWriteConfig, attach_write_buffer, flush_write_buffer
@@ -153,15 +153,12 @@ class ParseWriteBufferTests(unittest.TestCase):
 
 class ParserBatchingParityExportTests(unittest.TestCase):
     def test_checksum_stable_with_batching_enabled(self):
-        from lib.etl_benchmark import run_parse_export_preprocess
-        from lib.etl_metrics import EtlStageMetrics
+        from parse_pipeline_helpers import run_parse_export_in_dir
 
         with tempfile.TemporaryDirectory() as tmp:
             priv = os.path.join(tmp, 'private')
             os.makedirs(priv)
-            from lib.benchmark_fixtures import write_benchmark_zip
-
-            write_benchmark_zip(
+            write_test_zip(
                 os.path.join(priv, 'LandlordTenant.Incr.2024-03-08.zip'),
                 20,
                 child_profile='weekly',
@@ -169,28 +166,20 @@ class ParserBatchingParityExportTests(unittest.TestCase):
 
             os.environ['PARSE_WRITE_BATCH_ENABLED'] = '1'
             try:
-                _, checksums_on, rows_on = run_parse_export_preprocess(
-                    priv,
-                    metrics=EtlStageMetrics(),
-                    parse_num_threads=1,
-                )
+                rows_on, checksums_on = run_parse_export_in_dir(priv, parse_num_threads=1)
             finally:
                 os.environ.pop('PARSE_WRITE_BATCH_ENABLED', None)
 
             priv2 = os.path.join(tmp, 'private2')
             os.makedirs(priv2)
-            write_benchmark_zip(
+            write_test_zip(
                 os.path.join(priv2, 'LandlordTenant.Incr.2024-03-08.zip'),
                 20,
                 child_profile='weekly',
             )
             os.environ['PARSE_WRITE_BATCH_ENABLED'] = '0'
             try:
-                _, checksums_off, rows_off = run_parse_export_preprocess(
-                    priv2,
-                    metrics=EtlStageMetrics.disabled(),
-                    parse_num_threads=1,
-                )
+                rows_off, checksums_off = run_parse_export_in_dir(priv2, parse_num_threads=1)
             finally:
                 os.environ.pop('PARSE_WRITE_BATCH_ENABLED', None)
 

@@ -136,13 +136,13 @@ class StagingExportIntegrationTests(unittest.TestCase):
 class ExportMatchesLegacyPreprocessTests(unittest.TestCase):
     def test_all_staging_csvs_match_raw_copy_plus_preprocess(self):
         import lib.etl_csv as etl_csv_mod
-        from lib.benchmark_fixtures import write_benchmark_zip
+        from parser_xml_fixtures import write_test_zip
         from lib.etl_stages import parse_xml_to_staging
 
         with tempfile.TemporaryDirectory() as tmp:
             priv = os.path.join(tmp, 'priv')
             os.makedirs(priv)
-            write_benchmark_zip(
+            write_test_zip(
                 os.path.join(priv, 'LandlordTenant.Incr.2024-03-08.zip'),
                 10,
                 child_profile='weekly',

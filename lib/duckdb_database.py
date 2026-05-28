@@ -1,11 +1,23 @@
 import duckdb
 import os
 import threading
-import time
 from contextlib import contextmanager
 
-from .etl_metrics import EtlStageMetrics, STAGING_TABLE_FAMILIES
 from .staging_csv_export import build_staging_copy_sql
+
+STAGING_TABLE_FAMILIES = (
+    'oca_index_staging',
+    'oca_causes_staging',
+    'oca_addresses_staging',
+    'oca_parties_staging',
+    'oca_events_staging',
+    'oca_appearances_staging',
+    'oca_motions_staging',
+    'oca_decisions_staging',
+    'oca_judgments_staging',
+    'oca_warrants_staging',
+    'oca_metadata_staging',
+)
 
 
 def fetch_staging_row_counts(db) -> dict[str, int]:
@@ -22,23 +34,21 @@ def fetch_staging_row_counts(db) -> dict[str, int]:
 
 
 class DuckDB:
-    """DuckDB database helper with methods for 
+    """DuckDB database helper with methods for
     exporting to csv, and running sql files and commands with thread safety"""
-    
-    def __init__(self, dbname, metrics=None):
+
+    def __init__(self, dbname):
         self.dbname = dbname
         self.conn = duckdb.connect(dbname)
         self._lock = threading.Lock()
-        self.metrics = metrics if metrics is not None else EtlStageMetrics.disabled()
-    
+
     def execute_sql_file(self, sql_file_path):
         """Execute SQL commands from a file"""
         with open(sql_file_path, 'r') as f:
             sql_content = f.read()
-        
-        # Split by semicolon and execute each statement
+
         statements = [stmt.strip() for stmt in sql_content.split(';') if stmt.strip()]
-        
+
         with self._lock:
             for statement in statements:
                 try:
@@ -47,7 +57,7 @@ class DuckDB:
                     print(f"Error executing statement: {statement[:100]}...")
                     print(f"Error: {e}")
                     raise
-    
+
     def execute(self, sql, params=None):
         """Execute a single SQL statement"""
         with self._lock:
@@ -77,23 +87,21 @@ class DuckDB:
             except Exception:
                 self.conn.execute('ROLLBACK')
                 raise
-    
+
     def close(self):
-        if self.conn: self.conn.close()
-    
+        if self.conn:
+            self.conn.close()
+
     def export_tables_to_csv(self, output_dir):
         """Export all tables to CSV files"""
         os.makedirs(output_dir, exist_ok=True)
-        export_start = time.perf_counter()
 
         with self._lock:
-            # Get list of all tables
             tables = self.conn.execute("SHOW TABLES").fetchall()
-            
+
             for table_row in tables:
                 table_name = table_row[0]
                 csv_path = os.path.join(output_dir, f"{table_name}.csv")
-                table_start = time.perf_counter()
 
                 describe_rows = self.conn.execute(
                     f'DESCRIBE {table_name}'
@@ -102,19 +110,3 @@ class DuckDB:
                 copy_sql = build_staging_copy_sql(table_name, csv_path, columns)
                 self.conn.execute(copy_sql)
                 print(f"Exported {table_name} to {csv_path}")
-
-                if self.metrics.enabled:
-                    if os.path.isfile(csv_path):
-                        self.metrics.export_bytes[table_name] = os.path.getsize(csv_path)
-                    self.metrics.increment('export_tables', 1)
-                    table_sec = time.perf_counter() - table_start
-                    per_table = self.metrics.stages.setdefault('duckdb_export_per_table', {})
-                    per_table[table_name] = round(table_sec, 6)
-
-        if self.metrics.enabled:
-            self.metrics.record_stage(
-                'duckdb_export',
-                time.perf_counter() - export_start,
-                table_count=len(tables),
-                total_bytes=sum(self.metrics.export_bytes.values()),
-            )

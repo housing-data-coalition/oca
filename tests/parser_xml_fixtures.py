@@ -1,15 +1,13 @@
-"""Synthetic OCA XML zip fixtures for repeatable parse-pipeline benchmarks."""
+"""Synthetic OCA XML fixtures for parser and export tests."""
 
 from __future__ import annotations
 
-import io
 import zipfile
 from typing import Literal
 
-from .etl_constants import DATA_FILENAME
+from lib.etl_constants import DATA_FILENAME
 
 NS = 'http://www.example.org/LandlordTenantExtractSchema'
-NS_MAP = {'lt': NS}
 
 
 def _tag(local: str) -> str:
@@ -146,50 +144,14 @@ def build_extract_xml(
     return ''.join(parts).encode('utf-8')
 
 
-def write_benchmark_zip(
+def write_test_zip(
     zip_path: str,
     case_count: int,
     *,
-    zip_basename: str | None = None,
     child_profile: Literal['weekly', 'heavy'] = 'weekly',
 ) -> str:
-    """Write a zip file containing LandlordTenantExtract.xml; return zip path."""
+    """Write a zip containing LandlordTenantExtract.xml; return zip path."""
     xml_bytes = build_extract_xml(case_count, child_profile=child_profile)
     with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(DATA_FILENAME, xml_bytes)
     return zip_path
-
-
-SAMPLE_PROFILES = {
-    'weekly': {
-        'case_count': 250,
-        'child_profile': 'weekly',
-        'zip_name': 'LandlordTenant.Incr.2024-03-08.zip',
-        'description': 'Representative weekly incremental (~250 cases, moderate children)',
-    },
-    'heavy': {
-        'case_count': 2500,
-        'child_profile': 'heavy',
-        'zip_name': 'LandlordTenant.Initial.FiledIn2024.2024-03-01.zip',
-        'description': 'Heavier backfill-style (~2500 cases, richer child collections)',
-    },
-}
-
-
-def materialize_benchmark_samples(output_dir: str, profiles: list[str] | None = None) -> dict[str, str]:
-    """Create fixed-input zip files under output_dir; return profile -> path."""
-    import os
-
-    os.makedirs(output_dir, exist_ok=True)
-    selected = profiles or list(SAMPLE_PROFILES.keys())
-    paths = {}
-    for name in selected:
-        spec = SAMPLE_PROFILES[name]
-        zip_path = os.path.join(output_dir, spec['zip_name'])
-        write_benchmark_zip(
-            zip_path,
-            spec['case_count'],
-            child_profile=spec['child_profile'],
-        )
-        paths[name] = zip_path
-    return paths
