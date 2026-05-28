@@ -163,10 +163,39 @@ def preprocess_and_upload_staging_csvs(
         pool.starmap(upload_public_file, files_zip)
 
 
-def import_and_promote_staging(manifest, db, pub_dir, s3_args, s3_prefix, selection):
+def _assert_schema_bootstrap_context(db, expected_schema):
+    schema_name = (expected_schema or '').strip()
+    if not schema_name:
+        raise RuntimeError('DB schema must be set before running core table bootstrap.')
+
+    schema_row = db.sql_fetch_one(
+        "SELECT current_schema(), current_setting('search_path')"
+    )
+    current_schema, search_path = schema_row if schema_row else (None, '')
+    if not current_schema:
+        raise RuntimeError('Unable to resolve active schema before core table bootstrap.')
+
+    if current_schema != schema_name:
+        raise RuntimeError(
+            f"Schema bootstrap guard failed: expected current_schema '{schema_name}', got '{current_schema}'."
+        )
+
+    if schema_name not in (search_path or ''):
+        raise RuntimeError(
+            f"Schema bootstrap guard failed: search_path '{search_path}' does not include '{schema_name}'."
+        )
+
+
+def ensure_core_tables_exist(db, expected_schema):
+    _assert_schema_bootstrap_context(db, expected_schema)
+    db.execute_sql_file('create_tables.sql')
+
+
+def import_and_promote_staging(manifest, db, pub_dir, s3_args, s3_prefix, selection, expected_schema):
     imported_staging_tables = staging_tables_with_rows(pub_dir)
     staging_tables = [t + '_staging' for t in OCA_TABLES]
     manifest.upsert_step('promote_staging', 'running')
+    ensure_core_tables_exist(db, expected_schema)
     db.execute_sql_file('create_tables_staging.sql')
     for t in staging_tables:
         csv_filepath = os.path.join(pub_dir, f"{t}.csv")
@@ -250,7 +279,7 @@ def geocode_and_publish_addresses(
             'no oca_addresses_staging rows this run'
         )
 
-    create_date_files(s3, selection.selected_zip_files[-1], pub_dir)
+    create_date_files(selection.selected_zip_files[-1], pub_dir)
     public_files = ['last-updated-shield.png', 'last-updated-date.txt']
     if publish_addresses:
         public_files.append('oca_addresses_private.csv')

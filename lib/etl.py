@@ -120,7 +120,13 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args, runtime_args=None
             csv_preprocess_chunk_size=csv_row_check_chunk_size,
         )
         staging_tables_with_data = import_and_promote_staging(
-            manifest, db, pub_dir, s3_args, s3_prefix, selection
+            manifest,
+            db,
+            pub_dir,
+            s3_args,
+            s3_prefix,
+            selection,
+            runtime_args.get('db_schema') or db_args.get('schema') or 'public',
         )
         published_core_keys = publish_core_tables(manifest, db, s3_args, s3_prefix)
         geocode_and_publish_addresses(

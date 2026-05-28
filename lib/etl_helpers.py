@@ -64,13 +64,13 @@ def prep_db(s3, db, local_dir):
         db.execute_sql_file('create_tables.sql')
 
 
-def create_date_files(s3, data_file, local_dir):
+def create_date_files(data_file, local_dir):
     """
     Create a text file and a custom shield image with date the data was 
-    last updated and add them to the public S3 folder.
+    last updated.
 
-    :param s3: S3 object
     :param data_file: file path for data being processed
+    :param local_dir: path for local directory to save date files
     """
     date = re.search(r'(\d{4}-\d{2}-\d{2})', data_file).group(1)
 
