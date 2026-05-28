@@ -548,7 +548,7 @@ def _worker_thread(case_queue, db_queue, extract_date, thread_id):
                 parse_case(case, thread_db, extract_date)
             except Exception as e:
                 print(f"Thread {thread_id}: Error parsing case: {e}")
-                flush_write_buffer(thread_db)
+                flush_write_buffer(thread_db, reason='parse_error')
             finally:
                 # Clear the case copy from memory
                 case.clear()
