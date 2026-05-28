@@ -121,7 +121,7 @@ def download_selected_files(manifest, sftp, s3, priv_dir, s3_prefix, selection):
     manifest.upsert_step('download_files', 'completed')
 
 
-def parse_xml_to_staging(manifest, staging_db, priv_dir):
+def parse_xml_to_staging(manifest, staging_db, priv_dir, parse_num_threads=8):
     def sort_by_date(file):
         r = re.search(r'(\d+.+)\.zip', file).group(0).replace('.', ' ')
         return r
@@ -144,7 +144,12 @@ def parse_xml_to_staging(manifest, staging_db, priv_dir):
                     extract_date = elem.text
                     break
         with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
-            parse_file(xml_file, staging_db, extract_date)
+            parse_file(
+                xml_file,
+                staging_db,
+                extract_date,
+                num_threads=parse_num_threads,
+            )
         manifest.upsert_file(
             file_name, source='local', status='parsed', stage='parse',
             details={'extract_date': extract_date}
@@ -152,15 +157,41 @@ def parse_xml_to_staging(manifest, staging_db, priv_dir):
     manifest.upsert_step('parse_xml', 'completed')
 
 
-def preprocess_and_upload_staging_csvs(
-    staging_db, pub_dir, mode, s3_args, s3_prefix, csv_preprocess_chunk_size=1000
+def export_staging_to_csv(
+    staging_db,
+    pub_dir,
+    *,
+    csv_preprocess_chunk_size=1000,
+    upload=True,
+    mode=None,
+    s3_args=None,
+    s3_prefix=None,
 ):
+    """Export DuckDB staging tables to CSV and optionally preprocess + upload."""
     staging_db.export_tables_to_csv(output_dir=pub_dir)
     preprocess_staging_csv_dir(pub_dir, chunk_size=csv_preprocess_chunk_size)
+
+    if not upload:
+        return
+
     public_files = [i for i in os.listdir(pub_dir) if i.endswith('.csv')]
     with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
         files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args), repeat(s3_prefix))
         pool.starmap(upload_public_file, files_zip)
+
+
+def preprocess_and_upload_staging_csvs(
+    staging_db, pub_dir, mode, s3_args, s3_prefix, csv_preprocess_chunk_size=1000
+):
+    export_staging_to_csv(
+        staging_db,
+        pub_dir,
+        csv_preprocess_chunk_size=csv_preprocess_chunk_size,
+        upload=True,
+        mode=mode,
+        s3_args=s3_args,
+        s3_prefix=s3_prefix,
+    )
 
 
 def _assert_schema_bootstrap_context(db, expected_schema):

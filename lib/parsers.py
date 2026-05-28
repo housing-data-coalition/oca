@@ -3,6 +3,8 @@ from lxml import etree
 import threading
 import queue
 
+from .parse_write_buffer import attach_write_buffer, flush_write_buffer, staging_execute
+
 NAMESPACE = '{http://www.example.org/LandlordTenantExtractSchema}'
 
 def oca_tag(tag):
@@ -107,7 +109,7 @@ def parse_index(case, db):
     values = tuple(row.get(col) for col in columns)
     placeholders = ', '.join(['?' for _ in columns])
     insert_sql = f"INSERT OR REPLACE INTO oca_index_staging ({', '.join(columns)}) VALUES ({placeholders})"
-    db.execute(insert_sql, values)
+    staging_execute(db, insert_sql, values)
 
 
 def parse_causes(case, db):
@@ -120,7 +122,7 @@ def parse_causes(case, db):
     IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
 
     # Eelete existing records for this case to handle multiple causes
-    db.execute("DELETE FROM oca_causes_staging WHERE indexnumberid = ?", (IndexNumberId,))
+    staging_execute(db, "DELETE FROM oca_causes_staging WHERE indexnumberid = ?", (IndexNumberId,))
 
     causes = case.find(oca_tag('PrimaryClaimCauseOfActions'))
 
@@ -138,7 +140,7 @@ def parse_causes(case, db):
         values = tuple(row.get(col) for col in columns)
         placeholders = ', '.join(['?' for _ in columns])
         insert_sql = f"INSERT INTO oca_causes_staging ({', '.join(columns)}) VALUES ({placeholders})"
-        db.execute(insert_sql, values)
+        staging_execute(db, insert_sql, values)
 
 
 def parse_addresses(case, db):
@@ -151,7 +153,7 @@ def parse_addresses(case, db):
     IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
 
     # First, delete existing records for this case to handle multiple addresses
-    db.execute("DELETE FROM oca_addresses_staging WHERE indexnumberid = ?", (IndexNumberId,))
+    staging_execute(db, "DELETE FROM oca_addresses_staging WHERE indexnumberid = ?", (IndexNumberId,))
 
     addresses = case.find(oca_tag('PropertyAddresses'))
 
@@ -171,7 +173,7 @@ def parse_addresses(case, db):
         values = tuple(row.get(col) for col in columns)
         placeholders = ', '.join(['?' for _ in columns])
         insert_sql = f"INSERT INTO oca_addresses_staging ({', '.join(columns)}) VALUES ({placeholders})"
-        db.execute(insert_sql, values)
+        staging_execute(db, insert_sql, values)
 
 
 def parse_parties(case, db):
@@ -184,7 +186,7 @@ def parse_parties(case, db):
     IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
 
     # First, delete existing records for this case to handle multiple parties
-    db.execute("DELETE FROM oca_parties_staging WHERE indexnumberid = ?", (IndexNumberId,))
+    staging_execute(db, "DELETE FROM oca_parties_staging WHERE indexnumberid = ?", (IndexNumberId,))
 
     parties = case.find(oca_tag('Parties'))
 
@@ -203,7 +205,7 @@ def parse_parties(case, db):
         values = tuple(row.get(col) for col in columns)
         placeholders = ', '.join(['?' for _ in columns])
         insert_sql = f"INSERT INTO oca_parties_staging ({', '.join(columns)}) VALUES ({placeholders})"
-        db.execute(insert_sql, values)
+        staging_execute(db, insert_sql, values)
 
 
 def parse_events(case, db):
@@ -216,7 +218,7 @@ def parse_events(case, db):
     IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
 
     # First, delete existing records for this case to handle multiple events
-    db.execute("DELETE FROM oca_events_staging WHERE indexnumberid = ?", (IndexNumberId,))
+    staging_execute(db, "DELETE FROM oca_events_staging WHERE indexnumberid = ?", (IndexNumberId,))
 
     events = case.find(oca_tag('Events'))
 
@@ -236,7 +238,7 @@ def parse_events(case, db):
         values = tuple(row.get(col) for col in columns)
         placeholders = ', '.join(['?' for _ in columns])
         insert_sql = f"INSERT INTO oca_events_staging ({', '.join(columns)}) VALUES ({placeholders})"
-        db.execute(insert_sql, values)
+        staging_execute(db, insert_sql, values)
 
 
 def appearance_outcome_to_dict(elem):
@@ -267,7 +269,7 @@ def parse_appearances(case, db):
     IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
 
     # First, delete existing records for this case to handle multiple appearances
-    db.execute("DELETE FROM oca_appearances_staging WHERE indexnumberid = ?", (IndexNumberId,))
+    staging_execute(db, "DELETE FROM oca_appearances_staging WHERE indexnumberid = ?", (IndexNumberId,))
 
     appearances = case.find(oca_tag('Appearances'))
 
@@ -297,7 +299,7 @@ def parse_appearances(case, db):
         values = tuple(row.get(col) for col in columns)
         placeholders = ', '.join(['?' for _ in columns])
         insert_sql = f"INSERT INTO oca_appearances_staging ({', '.join(columns)}) VALUES ({placeholders})"
-        db.execute(insert_sql, values)
+        staging_execute(db, insert_sql, values)
 
 
 def parse_motions(case, db):
@@ -310,7 +312,7 @@ def parse_motions(case, db):
     IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
 
     # First, delete existing records for this case to handle multiple motions
-    db.execute("DELETE FROM oca_motions_staging WHERE indexnumberid = ?", (IndexNumberId,))
+    staging_execute(db, "DELETE FROM oca_motions_staging WHERE indexnumberid = ?", (IndexNumberId,))
 
     motions = case.find(oca_tag('Motions'))
 
@@ -332,7 +334,7 @@ def parse_motions(case, db):
         values = tuple(row.get(col) for col in columns)
         placeholders = ', '.join(['?' for _ in columns])
         insert_sql = f"INSERT INTO oca_motions_staging ({', '.join(columns)}) VALUES ({placeholders})"
-        db.execute(insert_sql, values)
+        staging_execute(db, insert_sql, values)
 
 
 def parse_decisions(case, db):
@@ -349,7 +351,7 @@ def parse_decisions(case, db):
     IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
 
     # First, delete existing records for this case to handle multiple decisions
-    db.execute("DELETE FROM oca_decisions_staging WHERE indexnumberid = ?", (IndexNumberId,))
+    staging_execute(db, "DELETE FROM oca_decisions_staging WHERE indexnumberid = ?", (IndexNumberId,))
 
     decisions = case.find(oca_tag('Decisions'))
 
@@ -367,7 +369,7 @@ def parse_decisions(case, db):
         values = tuple(row.get(col) for col in columns)
         placeholders = ', '.join(['?' for _ in columns])
         insert_sql = f"INSERT INTO oca_decisions_staging ({', '.join(columns)}) VALUES ({placeholders})"
-        db.execute(insert_sql, values)
+        staging_execute(db, insert_sql, values)
 
 
 def parse_judgments(case, db):
@@ -381,7 +383,7 @@ def parse_judgments(case, db):
     IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
 
     # First, delete existing records for this case to handle multiple judgments
-    db.execute("DELETE FROM oca_judgments_staging WHERE indexnumberid = ?", (IndexNumberId,))
+    staging_execute(db, "DELETE FROM oca_judgments_staging WHERE indexnumberid = ?", (IndexNumberId,))
 
     judgments = case.find(oca_tag('Judgments'))
 
@@ -407,7 +409,7 @@ def parse_judgments(case, db):
         values = tuple(row.get(col) for col in columns)
         placeholders = ', '.join(['?' for _ in columns])
         insert_sql = f"INSERT INTO oca_judgments_staging ({', '.join(columns)}) VALUES ({placeholders})"
-        db.execute(insert_sql, values)
+        staging_execute(db, insert_sql, values)
 
 
 def parse_warrants(case, db):
@@ -421,7 +423,7 @@ def parse_warrants(case, db):
     IndexNumberId = case.find(INDEX_NUMBER_ID_TAG).text
 
     # First, delete existing records for this case to handle multiple warrants
-    db.execute("DELETE FROM oca_warrants_staging WHERE indexnumberid = ?", (IndexNumberId,))
+    staging_execute(db, "DELETE FROM oca_warrants_staging WHERE indexnumberid = ?", (IndexNumberId,))
 
     judgments = case.find(oca_tag('Judgments'))
 
@@ -469,7 +471,7 @@ def parse_warrants(case, db):
             values = tuple(row.get(col) for col in columns)
             placeholders = ', '.join(['?' for _ in columns])
             insert_sql = f"INSERT INTO oca_warrants_staging ({', '.join(columns)}) VALUES ({placeholders})"
-            db.execute(insert_sql, values)
+            staging_execute(db, insert_sql, values)
 
 
 def update_metadata(case, db, extract_date):
@@ -496,7 +498,7 @@ def update_metadata(case, db, extract_date):
     values = tuple(row.get(col) for col in columns)
     placeholders = ', '.join(['?' for _ in columns])
     insert_sql = f"INSERT OR REPLACE INTO oca_metadata_staging ({', '.join(columns)}) VALUES ({placeholders})"
-    db.execute(insert_sql, values)
+    staging_execute(db, insert_sql, values)
 
 
 def parse_case(case, db, extract_date):
@@ -511,6 +513,9 @@ def parse_case(case, db, extract_date):
 
     # If this case is flagged for removal, skip the parsing steps
     if is_case_to_delete(case):
+        buffer = getattr(db, 'write_buffer', None)
+        if buffer is not None:
+            buffer.on_case_complete()
         return
 
     parse_index(case, db)
@@ -524,6 +529,10 @@ def parse_case(case, db, extract_date):
     parse_judgments(case, db)
     parse_warrants(case, db)
 
+    buffer = getattr(db, 'write_buffer', None)
+    if buffer is not None:
+        buffer.on_case_complete()
+
 
 def _worker_thread(case_queue, db_queue, extract_date, thread_id):
     """Worker thread that processes cases from the queue"""
@@ -532,13 +541,14 @@ def _worker_thread(case_queue, db_queue, extract_date, thread_id):
             case = case_queue.get(timeout=1)
             if case is None:  # Sentinel value to stop thread
                 break
-            
+
             # Each thread needs its own database connection
             thread_db = db_queue.get()
             try:
                 parse_case(case, thread_db, extract_date)
             except Exception as e:
                 print(f"Thread {thread_id}: Error parsing case: {e}")
+                flush_write_buffer(thread_db, reason='parse_error')
             finally:
                 # Clear the case copy from memory
                 case.clear()
@@ -553,21 +563,20 @@ def _worker_thread(case_queue, db_queue, extract_date, thread_id):
 def parse_file(xml_file, staging_db, extract_date, num_threads=8):
     """
     Parse XML file with multiple threads
-    
+
     :param xml_file: file-like object or path to XML file
     :param staging_db: DuckDB database object
     :param extract_date: date of extract
     :param num_threads: number of worker threads (increasing this doesn't speed up much, bottleneck is the database writes)
     """
     from .duckdb_database import DuckDB
-    
-    # Create queues
+
     case_queue = queue.Queue(maxsize=num_threads * 10)
     db_queue = queue.Queue()
-    
-    # Create database connections for each thread
+
     for _ in range(num_threads):
         thread_db = DuckDB(staging_db.dbname)
+        attach_write_buffer(thread_db)
         db_queue.put(thread_db)
     
     # Start worker threads
@@ -586,9 +595,7 @@ def parse_file(xml_file, staging_db, extract_date, num_threads=8):
     
     total_cases = 0
     for _, case in frogress.bar(context):
-        # Make a deep copy since we'll be clearing the original
         case_copy = etree.fromstring(etree.tostring(case))
-        
         case_queue.put(case_copy)
         total_cases += 1
         
@@ -597,17 +604,18 @@ def parse_file(xml_file, staging_db, extract_date, num_threads=8):
         while case.getprevious() is not None:
             del case.getparent()[0]
     
-    # Signal threads to stop
+    # Signal threads to stop (workers flush remaining buffer on sentinel)
     for _ in range(num_threads):
         case_queue.put(None)
-    
+
     # Wait for all threads to complete
     for t in threads:
         t.join()
-    
-    # Close thread database connections
+
+    # Close thread database connections (final flush for any stragglers)
     while not db_queue.empty():
         thread_db = db_queue.get()
+        flush_write_buffer(thread_db)
         thread_db.close()
     
     print(f"Processed {total_cases} cases with {num_threads} threads")
