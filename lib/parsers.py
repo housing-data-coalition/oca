@@ -550,7 +550,7 @@ def _worker_thread(case_queue, db_queue, extract_date, thread_id):
             case_queue.task_done()
 
 
-def parse_file(xml_file, staging_db, extract_date, num_threads=8):
+def parse_file(xml_file, staging_db, extract_date, num_threads=8, metrics=None):
     """
     Parse XML file with multiple threads
     
@@ -558,8 +558,13 @@ def parse_file(xml_file, staging_db, extract_date, num_threads=8):
     :param staging_db: DuckDB database object
     :param extract_date: date of extract
     :param num_threads: number of worker threads (increasing this doesn't speed up much, bottleneck is the database writes)
+    :param metrics: optional EtlStageMetrics collector (instrumentation only)
     """
+    import time
     from .duckdb_database import DuckDB
+
+    metrics = metrics if metrics is not None else getattr(staging_db, 'metrics', None)
+    parse_start = time.perf_counter() if metrics and metrics.enabled else None
     
     # Create queues
     case_queue = queue.Queue(maxsize=num_threads * 10)
@@ -585,10 +590,14 @@ def parse_file(xml_file, staging_db, extract_date, num_threads=8):
     
     
     total_cases = 0
+    delete_cases = 0
     for _, case in frogress.bar(context):
         # Make a deep copy since we'll be clearing the original
         case_copy = etree.fromstring(etree.tostring(case))
-        
+
+        if metrics and metrics.enabled and is_case_to_delete(case_copy):
+            delete_cases += 1
+
         case_queue.put(case_copy)
         total_cases += 1
         
@@ -611,4 +620,16 @@ def parse_file(xml_file, staging_db, extract_date, num_threads=8):
         thread_db.close()
     
     print(f"Processed {total_cases} cases with {num_threads} threads")
+
+    if metrics and metrics.enabled:
+        metrics.increment('parse_cases_total', total_cases)
+        metrics.increment('parse_delete_cases', delete_cases)
+        metrics.set_counter('parse_threads', num_threads)
+        if parse_start is not None:
+            metrics.record_stage(
+                'parse_file',
+                time.perf_counter() - parse_start,
+                cases=total_cases,
+                delete_cases=delete_cases,
+            )
 

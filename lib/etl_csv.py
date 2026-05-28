@@ -2,6 +2,7 @@
 
 import csv
 import os
+import time
 
 _APPEARANCES_PREFIX = 'oca_appearances_staging'
 _JUDGMENTS_PREFIX = 'oca_judgments_staging'
@@ -61,7 +62,7 @@ def _file_preprocess_rules(filename):
     return drop_columns, int_columns
 
 
-def preprocess_csv_file(file_path, chunk_size=1000):
+def preprocess_csv_file(file_path, chunk_size=1000, metrics=None):
     """
     Rewrite one staging CSV in place using bounded memory.
 
@@ -70,10 +71,12 @@ def preprocess_csv_file(file_path, chunk_size=1000):
     """
     filename = os.path.basename(file_path)
     if not filename.endswith('.csv'):
-        return
+        return 0
 
     drop_columns, int_columns = _file_preprocess_rules(filename)
     tmp_path = f'{file_path}.tmp'
+    rows_touched = 0
+    file_start = time.perf_counter()
 
     with open(file_path, newline='', encoding='utf-8') as infile, open(
         tmp_path, 'w', newline='', encoding='utf-8'
@@ -81,7 +84,7 @@ def preprocess_csv_file(file_path, chunk_size=1000):
         reader = csv.DictReader(infile)
         if not reader.fieldnames:
             os.remove(tmp_path)
-            return
+            return 0
 
         fieldnames = [name for name in reader.fieldnames if name not in drop_columns]
         writer = csv.DictWriter(outfile, fieldnames=fieldnames, lineterminator='\n')
@@ -90,6 +93,7 @@ def preprocess_csv_file(file_path, chunk_size=1000):
         batch = []
         for row in reader:
             batch.append(_preprocess_row(filename, fieldnames, int_columns, row))
+            rows_touched += 1
             if len(batch) >= chunk_size:
                 writer.writerows(batch)
                 batch.clear()
@@ -98,8 +102,30 @@ def preprocess_csv_file(file_path, chunk_size=1000):
 
     os.replace(tmp_path, file_path)
 
+    if metrics is not None and metrics.enabled:
+        metrics.preprocess_rows[filename] = rows_touched
+        metrics.increment('preprocess_csv_files', 1)
+        per_file = metrics.stages.setdefault('csv_preprocess_per_file', {})
+        per_file[filename] = round(time.perf_counter() - file_start, 6)
 
-def preprocess_staging_csv_dir(target_dir, chunk_size=1000):
+    return rows_touched
+
+
+def preprocess_staging_csv_dir(target_dir, chunk_size=1000, metrics=None):
+    preprocess_start = time.perf_counter()
+    total_rows = 0
     for filename in sorted(os.listdir(target_dir)):
         if filename.endswith('.csv'):
-            preprocess_csv_file(os.path.join(target_dir, filename), chunk_size=chunk_size)
+            total_rows += preprocess_csv_file(
+                os.path.join(target_dir, filename),
+                chunk_size=chunk_size,
+                metrics=metrics,
+            )
+    if metrics is not None and metrics.enabled:
+        metrics.set_counter('preprocess_rows_total', total_rows)
+        metrics.record_stage(
+            'csv_preprocess',
+            time.perf_counter() - preprocess_start,
+            files_processed=metrics.counters.get('preprocess_csv_files', 0),
+            rows_touched=total_rows,
+        )
