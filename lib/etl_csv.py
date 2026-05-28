@@ -4,6 +4,8 @@ import csv
 import os
 import time
 
+from .staging_csv_export import staging_csv_needs_preprocess
+
 _APPEARANCES_PREFIX = 'oca_appearances_staging'
 _JUDGMENTS_PREFIX = 'oca_judgments_staging'
 _WARRANTS_PREFIX = 'oca_warrants_staging'
@@ -115,12 +117,18 @@ def preprocess_staging_csv_dir(target_dir, chunk_size=1000, metrics=None):
     preprocess_start = time.perf_counter()
     total_rows = 0
     for filename in sorted(os.listdir(target_dir)):
-        if filename.endswith('.csv'):
-            total_rows += preprocess_csv_file(
-                os.path.join(target_dir, filename),
-                chunk_size=chunk_size,
-                metrics=metrics,
-            )
+        if not filename.endswith('.csv'):
+            continue
+        if not staging_csv_needs_preprocess(filename):
+            if metrics is not None and metrics.enabled:
+                metrics.preprocess_rows[filename] = 0
+                metrics.increment('preprocess_csv_files_skipped', 1)
+            continue
+        total_rows += preprocess_csv_file(
+            os.path.join(target_dir, filename),
+            chunk_size=chunk_size,
+            metrics=metrics,
+        )
     if metrics is not None and metrics.enabled:
         metrics.set_counter('preprocess_rows_total', total_rows)
         metrics.record_stage(

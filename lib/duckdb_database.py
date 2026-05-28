@@ -5,6 +5,7 @@ import time
 from contextlib import contextmanager
 
 from .etl_metrics import EtlStageMetrics, STAGING_TABLE_FAMILIES
+from .staging_csv_export import build_staging_copy_sql
 
 
 def fetch_staging_row_counts(db) -> dict[str, int]:
@@ -94,8 +95,12 @@ class DuckDB:
                 csv_path = os.path.join(output_dir, f"{table_name}.csv")
                 table_start = time.perf_counter()
 
-                # Export to CSV
-                self.conn.execute(f"COPY {table_name} TO '{csv_path}' (HEADER, DELIMITER ',')")
+                describe_rows = self.conn.execute(
+                    f'DESCRIBE {table_name}'
+                ).fetchall()
+                columns = [(row[0], row[1]) for row in describe_rows]
+                copy_sql = build_staging_copy_sql(table_name, csv_path, columns)
+                self.conn.execute(copy_sql)
                 print(f"Exported {table_name} to {csv_path}")
 
                 if self.metrics.enabled:
@@ -105,10 +110,6 @@ class DuckDB:
                     table_sec = time.perf_counter() - table_start
                     per_table = self.metrics.stages.setdefault('duckdb_export_per_table', {})
                     per_table[table_name] = round(table_sec, 6)
-
-                # TODO: before exporting covert arrays to the postgres format, but ignore json objects
-                # Transform arrays: [1,2,3] -> {1,2,3}
-                # Ignore JSON objects: {[key: value]} -> [{key: value}]
 
         if self.metrics.enabled:
             self.metrics.record_stage(
