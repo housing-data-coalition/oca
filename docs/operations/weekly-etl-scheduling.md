@@ -1,10 +1,12 @@
 # Weekly OCA ETL scheduling and deployment
 
-The OCA pipeline ingests new SFTP XML zip files weekly, promotes staging data in PostgreSQL, geocodes addresses incrementally, and publishes CSVs to S3 via `aws_s3`. All three supported schedulers run the same container entrypoint:
+The OCA pipeline ingests new SFTP XML zip files weekly, geocodes addresses in the local staging CSV before S3 upload, promotes staging data in PostgreSQL, and publishes CSVs to S3 via `aws_s3`. All three supported schedulers run the same container entrypoint:
 
 ```bash
 python oca_update.py
 ```
+
+Historical RDS rows that still lack coordinates are handled separately by `oca_geocode_backfill.py` (not scheduled with weekly ETL). See [RDS geocode backfill](#rds-geocode-backfill-on-demand) below.
 
 Use Docker (or the published image `justfixnyc/oca:latest`) with credentials supplied via environment variables or a secret store. See [Runtime controls](#runtime-controls) and the root [README](../../README.md).
 
@@ -29,11 +31,26 @@ Refactor and E2E runs must set `S3_PREFIX=refactor/` (or another isolated prefix
 
 Memory target: **≤ 2 GiB** per job. Tune `GEOCODE_WORKERS` down (e.g. `2`) if geocoding approaches the limit.
 
-## Publish behavior (Step 6)
+## Publish behavior
 
-- **Core tables:** every table in `OCA_TABLES` is exported after a successful promotion batch. Selective skip per table is unsafe when `oca_index_staging` has rows: promotion deletes child rows for the batch even when a child staging CSV was empty.
-- **Addresses:** when incremental geocode has zero candidates and `oca_addresses_staging` had no rows this run, address CSV/view exports and `create_addresses_views.sql` are skipped.
+- **Geocode timing:** weekly runs geocode all rows in `oca_addresses_staging.csv` locally (`geocode_staging` manifest step) before uploading staging CSVs to S3. Promotion imports coordinates (and sets `geom` on `oca_addresses`); there is no post-promotion RDS geocode in `oca_etl()`.
+- **Core tables:** every table in `OCA_TABLES` is exported after promotion. Selective skip per table is unsafe when `oca_index_staging` has rows: promotion deletes child rows for the batch even when a child staging CSV was empty.
+- **Address views:** `create_addresses_views.sql` runs on every successful weekly publish (views only; `geom` already on the base table).
 - **S3 encryption:** SSE-S3 normalization runs only on objects exported in the current run (not a full public-prefix scan).
+
+## RDS geocode backfill (on-demand)
+
+Use when `oca_addresses` still has rows with `lat IS NULL` (e.g. pre-CSV-geocode history). **Not** wired into cron, Kubernetes CronJob, or ECS weekly tasks.
+
+```bash
+docker compose run --rm app python oca_geocode_backfill.py
+```
+
+Same secrets as weekly ETL (`DATABASE_URL`, `DB_SCHEMA`, AWS if needed for manifest only). Tune with `GEOCODE_WORKERS` / `CENSUS_BATCH_CHUNK_SIZE` or CLI flags.
+
+- Selects only ungeocoded rows (`select_addresses_needing_geocode.sql`).
+- Records manifest `mode='geocode_backfill'` with step `geocode_refresh` only.
+- **Does not** run `create_addresses_views.sql` or publish public CSVs. Re-run publish (or a full `oca_update.py` publish path) if S3 must reflect backfilled coordinates.
 
 ## 1. Local Docker + cron (weekly)
 

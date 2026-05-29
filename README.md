@@ -57,11 +57,19 @@ cp .env.example .env     # Or 'copy .env.example .env' on Windows
 
 Required variables: `DATABASE_URL`, `AWS_*`, `SFTP_*`, and `MODE=2` for full publish. Optional runtime controls are documented in [`.env.example`](.env.example).
 
-**Typical weekly run** (process new SFTP files only):
+**Typical weekly run** (process new SFTP files only; geocodes addresses in the staging CSV before S3 upload, then promotes and publishes):
 
 ```bash
 docker compose run --rm app python oca_update.py
 ```
+
+**RDS geocode backfill** (on-demand; rows in `oca_addresses` where `lat IS NULL` only; does not publish public CSVs):
+
+```bash
+docker compose run --rm app python oca_geocode_backfill.py
+```
+
+Use the same `DATABASE_URL` and `DB_SCHEMA` as weekly ETL. Optional flags: `--geocode-workers`, `--census-batch-chunk-size` (or env `GEOCODE_WORKERS`, `CENSUS_BATCH_CHUNK_SIZE`). After backfill, run view rebuild + publish separately if S3 public files must reflect new coordinates.
 
 **Refactor / replay run** (isolated schema and S3 prefix, force replay from S3 private backups):
 
