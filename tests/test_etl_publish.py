@@ -154,7 +154,6 @@ class NormalizePublicS3EncryptionTests(unittest.TestCase):
 
         encrypt_mock.assert_called_once_with(
             fake_s3,
-            'refactor/',
             published,
         )
 

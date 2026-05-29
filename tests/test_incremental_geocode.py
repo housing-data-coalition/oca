@@ -217,6 +217,7 @@ class UpsertGeocodedAddressesSqlTests(unittest.TestCase):
             r'WHERE\s+o\.indexnumberid\s*=\s*s\.indexnumberid\s*;',
             'upsert must not join on indexnumberid alone',
         )
+        self.assertIn('geom = ST_SetSRID(ST_Point(s.lon, s.lat), 4326)', sql)
 
 
 class UpsertGeocodedAddressesTests(unittest.TestCase):

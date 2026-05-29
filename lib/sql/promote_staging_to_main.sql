@@ -79,7 +79,23 @@ ON CONFLICT (indexnumberid) DO UPDATE SET
     dateofjurydemand = EXCLUDED.dateofjurydemand;
 
 INSERT INTO oca_causes SELECT * FROM oca_causes_staging;
-INSERT INTO oca_addresses SELECT * FROM oca_addresses_staging;
+INSERT INTO oca_addresses (
+    indexnumberid, street1, street2, city, state, postalcode, status,
+    house_number, street_name, borough_code, place_name, sname, hnum, boro,
+    lat, bin, bbl, cd, ct, council, grc, grc2, msg, msg2, lon, zip_code
+)
+SELECT
+    indexnumberid, street1, street2, city, state, postalcode, status,
+    house_number, street_name, borough_code, place_name, sname, hnum, boro,
+    lat, bin, bbl, cd, ct, council, grc, grc2, msg, msg2, lon, zip_code
+FROM oca_addresses_staging;
+
+UPDATE oca_addresses AS o
+SET geom = ST_SetSRID(ST_Point(o.lon, o.lat), 4326)
+WHERE o.indexnumberid IN (SELECT indexnumberid FROM oca_index_staging)
+  AND o.lat IS NOT NULL
+  AND o.lon IS NOT NULL;
+
 INSERT INTO oca_parties SELECT * FROM oca_parties_staging;
 INSERT INTO oca_events SELECT * FROM oca_events_staging;
 INSERT INTO oca_appearances SELECT * FROM oca_appearances_staging;

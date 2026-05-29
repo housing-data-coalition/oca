@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS oca_addresses (
   msg text,
   msg2 text,
   lon real,
-  zip_code text
+  zip_code text,
+  geom Geometry(Point, 4326)
 );
 
 CREATE TABLE IF NOT EXISTS oca_parties (
@@ -158,6 +159,17 @@ CREATE TABLE IF NOT EXISTS oca_metadata (
 CREATE INDEX IF NOT EXISTS oca_causes_indexnumberid_idx ON oca_causes (indexnumberid);
 CREATE INDEX IF NOT EXISTS oca_addresses_indexnumberid_idx ON oca_addresses (indexnumberid);
 CREATE INDEX IF NOT EXISTS oca_addresses_bbl_idx ON oca_addresses (bbl);
+CREATE INDEX IF NOT EXISTS oca_addresses_geom_idx ON oca_addresses USING GIST (geom);
+
+-- Existing deployments: add geom column and index if missing.
+ALTER TABLE oca_addresses ADD COLUMN IF NOT EXISTS geom Geometry(Point, 4326);
+CREATE INDEX IF NOT EXISTS oca_addresses_geom_idx ON oca_addresses USING GIST (geom);
+
+UPDATE oca_addresses
+SET geom = ST_SetSRID(ST_Point(lon, lat), 4326)
+WHERE geom IS NULL
+  AND lat IS NOT NULL
+  AND lon IS NOT NULL;
 CREATE INDEX IF NOT EXISTS oca_parties_indexnumberid_idx ON oca_parties (indexnumberid);
 CREATE INDEX IF NOT EXISTS oca_events_indexnumberid_idx ON oca_events (indexnumberid);
 CREATE INDEX IF NOT EXISTS oca_appearances_indexnumberid_idx ON oca_appearances (indexnumberid);
