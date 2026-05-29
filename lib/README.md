@@ -18,9 +18,11 @@ flowchart TD
   s3upload --> import[RDS import staging tables]
   import --> normalize[SQL normalize + appearance outcomes]
   normalize --> promote[Atomic promote staging → main]
-  promote --> publish[Export core tables to S3 public/]
-  publish --> geocode[Incremental geocode delta]
-  geocode --> addrpub[Publish addresses + views]
+  promote --> geocode[Incremental geocode + upsert]
+  geocode --> views[create_addresses_views.sql]
+  views --> publish[Publish all public CSVs + date files]
+  publish --> enc[SSE normalize except private address CSV]
+  enc --> priv[Upload private XML zips]
 ```
 
 Each run is orchestrated sequentially in `oca_etl()`. See [`etl_stages.py`](etl_stages.py) for stage implementations.
@@ -34,8 +36,10 @@ Each run is orchestrated sequentially in `oca_etl()`. See [`etl_stages.py`](etl_
 | Parse | `parsers.py`, `duckdb_database.py` | Streaming XML parse into local DuckDB (`staging.duckdb`); batched writes via `parse_write_buffer.py`. |
 | Export + preprocess | `duckdb_database.py`, `staging_csv_export.py`, `etl_csv.py` | DuckDB `COPY` with Postgres-compatible transforms; minimal second-pass CSV rewrite. |
 | Import + promote | `etl_stages.import_and_promote_staging`, `etl_promotion.py` | Bootstrap core tables, import staging CSVs via `aws_s3`, normalize, then single-transaction promotion. |
-| Publish core | `etl_publish.py`, `etl_stages.publish_core_tables` | Export `OCA_TABLES` to S3 public prefix; SSE-S3 normalization on objects written this run. |
-| Geocode + publish addresses | `etl_geocode.py`, `geocode_record.py` | Delta-select rows missing lat/lon; Geosupport + Census batch; upsert by natural address key; skip address export when unchanged. |
+| Geocode | `etl_geocode.py`, `etl_stages.geocode_addresses` | Delta-select rows missing lat/lon; Geosupport + Census batch; upsert by natural address key. |
+| Publish public | `etl_stages.publish_public_artifacts` | Rebuild address views; export all `OCA_TABLES` and address views; upload date badge files. |
+| Normalize encryption | `etl_stages.normalize_public_s3_encryption` | SSE-S3 on published keys except `oca_addresses_private.csv`. |
+| Upload private | `etl_stages.upload_private_source_files` | Back up raw XML zips to S3 `private/`. |
 
 ## Key modules
 
@@ -57,10 +61,10 @@ Each run is orchestrated sequentially in `oca_etl()`. See [`etl_stages.py`](etl_
 - [`etl.py`](etl.py) — run orchestrator, manifest lifecycle, stage sequencing.
 - [`etl_constants.py`](etl_constants.py) — table list, zip patterns, S3 folder constants.
 - [`etl_run_manifest.py`](etl_run_manifest.py) — `etl_runs` / `etl_files` / `etl_steps` bookkeeping.
-- [`etl_helpers.py`](etl_helpers.py) — paths, CSV row checks, PLUTO download, date badge files.
+- [`etl_helpers.py`](etl_helpers.py) — paths, CSV row checks, PLUTO download, local SVG date badge files.
 - [`etl_csv.py`](etl_csv.py) — streaming CSV normalization for tables not handled at export time.
 - [`etl_promotion.py`](etl_promotion.py) — atomic `promote_staging_to_main()`; count/checksum hooks for validation.
-- [`etl_publish.py`](etl_publish.py) — targeted S3 publish and address-export skip logic.
+- [`etl_publish.py`](etl_publish.py) — S3 export helpers and encryption key filtering.
 - [`etl_geocode.py`](etl_geocode.py) — incremental geocode candidate fetch, chunked geocoding, natural-key upsert.
 
 ### Geocoding
@@ -82,19 +86,20 @@ Scripts run against the active session schema (`DB_SCHEMA` / `search_path`).
 | `ensure_promotion_indexes.sql` | Indexes for promotion and address natural keys |
 | `select_addresses_needing_geocode.sql` | Delta rows for geocoding |
 | `create_geocode_staging_table.sql`, `upsert_geocoded_addresses.sql` | Geocode staging merge |
-| `create_addresses_views.sql` | PostGIS views after geocode |
+| `create_addresses_views.sql` | PostGIS views after geocode (before S3 export) |
 | `create_etl_manifest_tables.sql` | Run manifest DDL |
 
 Legacy/manual only: `reset_addresses_table.sql`, `update_metadata.sql`.
 
 ## Idempotency and run control
 
-- **Manifest** — each run records status in `etl_runs`, per-file progress in `etl_files`, and stage checkpoints in `etl_steps`.
-- **Connection resilience** — TCP keepalives and `ensure_connection()` reconnect before RDS-heavy stages after long parse/upload/geocode gaps.
+- **Manifest** — each run records status in `etl_runs`, per-file progress in `etl_files`, and stage checkpoints in `etl_steps` (including `geocode_refresh`, `publish_public`, `normalize_s3_encryption`, `upload_private`).
+- **Connection resilience** — TCP keepalives and `ensure_connection()` before geocode and before publish.
 - **Reprocess** — `REPROCESS_GLOB` selects S3 private backups; manifest skips completed files unless `FORCE_REPROCESS=true`.
 - **Schema isolation** — `DB_SCHEMA` + `S3_PREFIX` for refactor/E2E without touching production paths.
 - **Promotion** — scoped delete + insert / upsert in one transaction; safe to retry after import failure.
 - **Geocode** — only rows with `lat IS NULL` and a house number; upsert matches on address line columns, not `indexnumberid` alone.
+- **Publish** — every successful run exports the full public snapshot (all core tables and address views).
 
 ## Output tables
 

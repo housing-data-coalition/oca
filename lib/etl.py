@@ -32,12 +32,14 @@ from .etl_run_manifest import EtlRunManifest, completed_reprocess_files, manifes
 from .etl_stages import (
     FileSelection,
     download_selected_files,
-    geocode_and_publish_addresses,
+    geocode_addresses,
     import_and_promote_staging,
+    normalize_public_s3_encryption,
     parse_xml_to_staging,
     preprocess_and_upload_staging_csvs,
-    publish_core_tables,
+    publish_public_artifacts,
     select_input_files,
+    upload_private_source_files,
 )
 from .s3 import S3
 from .sftp import Sftp
@@ -117,7 +119,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args, runtime_args=None
             csv_preprocess_chunk_size=csv_row_check_chunk_size,
         )
         db.ensure_connection()
-        staging_tables_with_data = import_and_promote_staging(
+        import_and_promote_staging(
             manifest,
             db,
             pub_dir,
@@ -126,13 +128,16 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args, runtime_args=None
             selection,
             runtime_args.get('db_schema') or db_args.get('schema') or 'public',
         )
-        published_core_keys = publish_core_tables(manifest, db, s3_args, s3_prefix)
         db.ensure_connection()
-        geocode_and_publish_addresses(
-            manifest, db, s3, priv_dir, pub_dir, s3_args, s3_prefix, mode, selection,
-            geocode_workers, census_batch_chunk_size,
-            staging_tables_with_data, published_core_keys,
+        geocode_addresses(
+            manifest, db, pub_dir, geocode_workers, census_batch_chunk_size,
         )
+        db.ensure_connection()
+        published_keys = publish_public_artifacts(
+            manifest, db, s3_args, s3_prefix, mode, selection, pub_dir,
+        )
+        normalize_public_s3_encryption(manifest, s3, published_keys)
+        upload_private_source_files(manifest, s3, priv_dir, s3_prefix)
 
         manifest.mark_run_completed(
             len(selection.selected_zip_files),

@@ -45,10 +45,20 @@ def csv_has_rows(csv_filepath):
     return False
 
 
+def _last_updated_badge_svg(date):
+    label = f'Last Updated: {date}'
+    return f'''<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="28" role="img" aria-label="{label}">
+  <rect width="100%" height="100%" rx="4" fill="#fecc00"/>
+  <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle"
+        font-family="DejaVu Sans,Verdana,Geneva,sans-serif" font-size="14" fill="#000">{label}</text>
+</svg>
+'''
+
+
 def create_date_files(data_file, local_dir):
     """
-    Create a text file and a custom shield image with date the data was 
-    last updated.
+    Create a text file and a local SVG badge with the data last-updated date.
 
     :param data_file: file path for data being processed
     :param local_dir: path for local directory to save date files
@@ -56,12 +66,12 @@ def create_date_files(data_file, local_dir):
     date = re.search(r'(\d{4}-\d{2}-\d{2})', data_file).group(1)
 
     txt_file = os.path.join(local_dir, 'last-updated-date.txt')
-    open(txt_file, 'w').write(date)
+    with open(txt_file, 'w', encoding='utf-8') as handle:
+        handle.write(date)
 
-    url = f"https://raster.shields.io/badge/Last%20Updated-{date.replace('-', '--')}-yellow"
-    r = requests.get(url)
-    img_file = os.path.join(local_dir, 'last-updated-shield.png')
-    open(img_file, 'wb').write(r.content)
+    svg_file = os.path.join(local_dir, 'last-updated-shield.svg')
+    with open(svg_file, 'w', encoding='utf-8') as handle:
+        handle.write(_last_updated_badge_svg(date))
 
 
 def download_pluto(output_dir):

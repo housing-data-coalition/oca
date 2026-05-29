@@ -139,7 +139,7 @@ class S3:
 		}[ext]
 
 		# date-updated image needs to have no-cache to be used in github readme
-		cache_control = 'no-cache' if content_type == 'image/png' else ''
+		cache_control = 'no-cache' if content_type in ('image/png', 'image/svg+xml') else ''
 
 		# Put the object into the bucket
 		put_object(self.s3, self.bucket_name, object_name, file_path, content_type, cache_control)

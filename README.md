@@ -22,7 +22,7 @@ This work is licensed under a [Creative Commons Attribution-NonCommercial-ShareA
 
 ## CSV Files
 
-[![Date Last Updated](https://oca-2-dev.s3.amazonaws.com/public/last-updated-shield.png)](https://oca-2-dev.s3.amazonaws.com/public/last-updated-date.txt)
+[![Date Last Updated](https://oca-2-dev.s3.amazonaws.com/public/last-updated-shield.svg)](https://oca-2-dev.s3.amazonaws.com/public/last-updated-date.txt)
 
 * [`oca_index`](https://oca-2-dev.s3.amazonaws.com/public/oca_index.csv)
 * [`oca_causes`](https://oca-2-dev.s3.amazonaws.com/public/oca_causes.csv)
