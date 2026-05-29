@@ -1,46 +1,107 @@
-# Code
+# OCA ETL pipeline
 
-### `sftp.py`
+This directory contains the Extract–Transform–Load pipeline that ingests NY State housing court XML from OCA, parses it into relational tables, loads PostgreSQL on RDS, geocodes addresses, and publishes CSVs to S3. This process works with the protected address-level data ("level 2") but maintains public exports of the deidentified (zip code only, "level 1") version with the full address data kept only in secure S3 and RDS for organization under the legal agreement with OCA.
 
-This class provides a connection to the SFTP maintained by OCA and allows us to list the available files and download selected files.
+Entry point: [`oca_update.py`](../oca_update.py) loads `.env` and calls `oca_etl()` in [`etl.py`](etl.py).
 
-### `s3.py`
+## Pipeline flow
 
-This class provides a connection to our Amazon S3 account where both the private raw files and public csv files are stored, and allows us to list the available files and upload new files. 
+```mermaid
+flowchart TD
+  sftp[SFTP new zip files] --> select[Select files to process]
+  s3backup[S3 private backups] --> select
+  select --> download[Download selected zips]
+  download --> parse[Stream parse XML → DuckDB staging]
+  parse --> export[Export staging CSVs]
+  export --> preprocess[Normalize CSVs for RDS import]
+  preprocess --> s3upload[Upload staging CSVs to S3]
+  s3upload --> import[RDS import staging tables]
+  import --> normalize[SQL normalize + appearance outcomes]
+  normalize --> promote[Atomic promote staging → main]
+  promote --> publish[Export core tables to S3 public/]
+  publish --> geocode[Incremental geocode delta]
+  geocode --> addrpub[Publish addresses + views]
+```
 
-### `database.py`
+Each run is orchestrated sequentially in `oca_etl()`. See [`etl_stages.py`](etl_stages.py) for stage implementations.
 
-This class is adapted from [NYCDB](https://github.com/nycdb/nycdb/blob/master/src/nycdb/database.py), and provides a connection to the PostgreSQL database where the parsed files are stored. It includes methods to insert new rows, execute SQL files, export tables to CSV, and to create and restore from [pg_dump](https://www.postgresql.org/docs/12/app-pgdump.html) files.
+## Stages
 
-### `parsers.py`
+| Stage | Module | What it does |
+|-------|--------|--------------|
+| Select files | `etl_file_selection.py`, `etl_stages.select_input_files` | Picks new SFTP zips and/or S3 private replays (`REPROCESS_GLOB`); skips manifest-completed files unless `FORCE_REPROCESS=true`. |
+| Download | `etl_stages.download_selected_files` | New files from SFTP; replay files from S3 private backup. |
+| Parse | `parsers.py`, `duckdb_database.py` | Streaming XML parse into local DuckDB (`staging.duckdb`); batched writes via `parse_write_buffer.py`. |
+| Export + preprocess | `duckdb_database.py`, `staging_csv_export.py`, `etl_csv.py` | DuckDB `COPY` with Postgres-compatible transforms; minimal second-pass CSV rewrite. |
+| Import + promote | `etl_stages.import_and_promote_staging`, `etl_promotion.py` | Bootstrap core tables, import staging CSVs via `aws_s3`, normalize, then single-transaction promotion. |
+| Publish core | `etl_publish.py`, `etl_stages.publish_core_tables` | Export `OCA_TABLES` to S3 public prefix; SSE-S3 normalization on objects written this run. |
+| Geocode + publish addresses | `etl_geocode.py`, `geocode_record.py` | Delta-select rows missing lat/lon; Geosupport + Census batch; upsert by natural address key; skip address export when unchanged. |
 
-The final function `parse_file` takes an XML file and database connection from `database.py` and iterates over each case, parsing all the data into the various tables.
+## Key modules
 
-### `utils.py`
+### Connectivity
 
-A few basic helper functions: 
+- [`sftp.py`](sftp.py) — list and download raw XML zip files from OCA SFTP.
+- [`s3.py`](s3.py) — S3 upload/download, encryption normalization (`update_encryption`).
+- [`database.py`](database.py) — PostgreSQL connection (NYCDB-derived), schema `search_path`, transactions, `aws_s3` import/export helpers.
 
-* `make_dir`
-	* Create new local directories
+### Parse and local staging
 
-* `list_new_data_files`
-	* List files that are in the SFTP but not yet in S3
+- [`parsers.py`](parsers.py) — stream `<Index>` nodes from XML; per-case child table replace semantics; delete-event handling.
+- [`duckdb_database.py`](duckdb_database.py) — local DuckDB staging DB; export to CSV with contract transforms.
+- [`parse_write_buffer.py`](parse_write_buffer.py) — buffer INSERTs and flush in transaction windows (`PARSE_WRITE_*` env knobs).
+- [`staging_csv_export.py`](staging_csv_export.py) — per-table export specs (Postgres array literals, nullable ints, appearances column rules).
 
-* `promote_staging_to_main` (`etl_promotion.py`)
-	* Move newly parsed records in the database over from staging tables to the main ones (single transaction)
+### ETL orchestration
 
-* `create_date_files`
-	* Create plain text and image files for the most recent date of the data extracts for display in this repo
+- [`etl.py`](etl.py) — run orchestrator, advisory lock, manifest lifecycle, stage sequencing.
+- [`etl_constants.py`](etl_constants.py) — table list, zip patterns, S3 folder constants.
+- [`etl_run_manifest.py`](etl_run_manifest.py) — `etl_runs` / `etl_files` / `etl_steps` bookkeeping; schema-scoped advisory lock.
+- [`etl_helpers.py`](etl_helpers.py) — paths, CSV row checks, PLUTO download, date badge files.
+- [`etl_csv.py`](etl_csv.py) — streaming CSV normalization for tables not handled at export time.
+- [`etl_promotion.py`](etl_promotion.py) — atomic `promote_staging_to_main()`; count/checksum hooks for validation.
+- [`etl_publish.py`](etl_publish.py) — targeted S3 publish and address-export skip logic.
+- [`etl_geocode.py`](etl_geocode.py) — incremental geocode candidate fetch, chunked geocoding, natural-key upsert.
 
-### `etl.py`
+### Geocoding
 
-This is the main script that does the full process.
+- [`geocode_record.py`](geocode_record.py) — address normalization (usaddress), NYC Geosupport, Census batch geocoder.
 
+## SQL scripts (`lib/sql/`)
 
-### `oca_update.py`
+Scripts run against the active session schema (`DB_SCHEMA` / `search_path`).
 
-Finally, this file (in the top level of this repo) simply pulls environment variables from the `.env` file and runs `etl.py` to process an update to the data. 
+| Script | Role |
+|--------|------|
+| `create_tables.sql` | Non-destructive bootstrap of core tables and indexes |
+| `create_tables_staging.sql` | Per-run RDS staging tables |
+| `create_tables_staging_duckdb.sql` | Local DuckDB staging DDL |
+| `normalize_staging_after_import.sql` | Nullable int coercion after S3 import |
+| `update_appearance_outcomes.sql` | Assign `appearanceid`, expand outcomes JSON |
+| `promote_staging_to_main.sql` | Single-transaction staging → main promotion |
+| `ensure_promotion_indexes.sql` | Indexes for promotion and address natural keys |
+| `select_addresses_needing_geocode.sql` | Delta rows for geocoding |
+| `create_geocode_staging_table.sql`, `upsert_geocoded_addresses.sql` | Geocode staging merge |
+| `create_addresses_views.sql` | PostGIS views after geocode |
+| `create_etl_manifest_tables.sql` | Run manifest DDL |
 
-### `geocode_record.py`
+Legacy/manual only: `reset_addresses_table.sql`, `update_metadata.sql`.
 
-Uses usaddress to normalize addresses before sending it off to NYC's Geosupport to get bin, bbl, community districts, census tracts, council districts, and status messages.
+## Idempotency and run control
+
+- **Manifest** — each run records status in `etl_runs`, per-file progress in `etl_files`, and stage checkpoints in `etl_steps`.
+- **Advisory lock** — one concurrent writer per schema (`pg_try_advisory_lock`).
+- **Reprocess** — `REPROCESS_GLOB` selects S3 private backups; manifest skips completed files unless `FORCE_REPROCESS=true`.
+- **Schema isolation** — `DB_SCHEMA` + `S3_PREFIX` for refactor/E2E without touching production paths.
+- **Promotion** — scoped delete + insert / upsert in one transaction; safe to retry after import failure.
+- **Geocode** — only rows with `lat IS NULL` and a house number; upsert matches on address line columns, not `indexnumberid` alone.
+
+## Output tables
+
+Core tables (also published as public CSVs): `oca_index`, `oca_causes`, `oca_addresses`, `oca_parties`, `oca_events`, `oca_appearances`, `oca_appearance_outcomes`, `oca_motions`, `oca_decisions`, `oca_judgments`, `oca_warrants`. Defined in [`etl_constants.py`](etl_constants.py).
+
+## Further reading
+
+- Root [README](../README.md) — setup, env vars, Docker invocation
+- [`docs/operations/weekly-etl-scheduling.md`](../docs/operations/weekly-etl-scheduling.md) — cron, Kubernetes, EventBridge/ECS
+- [`docs/`](../docs/) — data dictionary links and raw XML notes
