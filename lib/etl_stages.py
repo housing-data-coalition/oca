@@ -27,8 +27,10 @@ from .etl_publish import (
     staging_tables_with_rows,
 )
 from .etl_geocode import (
+    GEOCODED_STAGING_ADDRESSES_CSV,
     fetch_addresses_needing_geocode,
     geocode_candidate_records,
+    geocode_staging_addresses_csv,
     upsert_geocoded_addresses,
 )
 from .parsers import oca_tag, parse_file
@@ -179,17 +181,48 @@ def export_staging_to_csv(
         pool.starmap(upload_public_file, files_zip)
 
 
-def preprocess_and_upload_staging_csvs(
-    staging_db, pub_dir, mode, s3_args, s3_prefix, csv_preprocess_chunk_size=1000
-):
+def export_staging_csvs(manifest, staging_db, pub_dir, csv_preprocess_chunk_size=1000):
+    """Export DuckDB staging tables to local CSV (no S3 upload)."""
+    manifest.upsert_step('export_staging', 'running')
     export_staging_to_csv(
         staging_db,
         pub_dir,
         csv_preprocess_chunk_size=csv_preprocess_chunk_size,
-        upload=True,
-        mode=mode,
-        s3_args=s3_args,
-        s3_prefix=s3_prefix,
+        upload=False,
+    )
+    manifest.upsert_step('export_staging', 'completed')
+
+
+def geocode_staging_csvs(manifest, pub_dir, geocode_workers, census_batch_chunk_size):
+    """Geocode all rows in ``oca_addresses_staging.csv`` before S3 upload."""
+    manifest.upsert_step('geocode_staging', 'running')
+    geocoded_row_count = geocode_staging_addresses_csv(
+        pub_dir,
+        geocode_workers,
+        census_batch_chunk_size,
+    )
+    manifest.upsert_step(
+        'geocode_staging',
+        'completed',
+        details={'geocoded_row_count': geocoded_row_count},
+    )
+    return geocoded_row_count
+
+
+def upload_staging_csvs(manifest, pub_dir, mode, s3_args, s3_prefix):
+    """Upload preprocessed staging CSVs to S3 ``public/``."""
+    manifest.upsert_step('upload_staging', 'running')
+    public_files = [
+        name for name in os.listdir(pub_dir)
+        if name.endswith('.csv') and name != GEOCODED_STAGING_ADDRESSES_CSV
+    ]
+    with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
+        files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args), repeat(s3_prefix))
+        pool.starmap(upload_public_file, files_zip)
+    manifest.upsert_step(
+        'upload_staging',
+        'completed',
+        details={'uploaded_file_count': len(public_files)},
     )
 
 

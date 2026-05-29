@@ -1,4 +1,6 @@
+import csv
 import os
+import tempfile
 import tracemalloc
 import unittest
 from pathlib import Path
@@ -7,13 +9,18 @@ from unittest import mock
 from lib.etl_geocode import (
     ADDRESS_ROW_KEY_COLUMNS,
     GEOCODE_ADDRESS_COLUMNS,
+    GEOCODED_STAGING_ADDRESSES_CSV,
+    STAGING_ADDRESSES_CSV,
     address_row_key,
     fetch_addresses_needing_geocode,
     geocode_candidate_records,
+    geocode_staging_addresses_csv,
+    read_staging_addresses_csv,
     row_needs_geocode,
     upsert_geocoded_addresses,
+    write_geocoded_staging_csv,
 )
-from lib.etl_stages import geocode_addresses
+from lib.etl_stages import geocode_addresses, geocode_staging_csvs
 
 
 class RowNeedsGeocodeTests(unittest.TestCase):
@@ -238,6 +245,137 @@ class UpsertGeocodedAddressesTests(unittest.TestCase):
         count = upsert_geocoded_addresses(fake_db, [])
         self.assertEqual(count, 0)
         fake_db.execute_sql_file.assert_not_called()
+
+
+class StagingCsvGeocodeTests(unittest.TestCase):
+    def _write_staging_csv(self, pub_dir, rows):
+        path = os.path.join(pub_dir, STAGING_ADDRESSES_CSV)
+        fieldnames = list(GEOCODE_ADDRESS_COLUMNS)
+        with open(path, 'w', encoding='utf-8', newline='') as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction='ignore')
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({col: row.get(col, '') for col in fieldnames})
+
+    def test_read_and_write_round_trip(self):
+        with tempfile.TemporaryDirectory() as pub_dir:
+            rows_in = [
+                {
+                    'indexnumberid': 'case-1',
+                    'street1': '1 Main',
+                    'street2': '',
+                    'city': 'NYC',
+                    'state': 'NY',
+                    'postalcode': '10001',
+                    'lat': '',
+                    'lon': '',
+                },
+            ]
+            self._write_staging_csv(pub_dir, rows_in)
+            read_rows, fieldnames = read_staging_addresses_csv(pub_dir)
+            self.assertEqual(len(read_rows), 1)
+            self.assertIn('indexnumberid', fieldnames)
+
+            read_rows[0]['lat'] = '40.1'
+            read_rows[0]['lon'] = '-73.9'
+            write_geocoded_staging_csv(pub_dir, read_rows, fieldnames, STAGING_ADDRESSES_CSV)
+            reread, _ = read_staging_addresses_csv(pub_dir)
+            self.assertEqual(reread[0]['lat'], '40.1')
+
+    def test_geocode_staging_overwrites_staging_csv(self):
+        with tempfile.TemporaryDirectory() as pub_dir:
+            self._write_staging_csv(pub_dir, [
+                {
+                    'indexnumberid': 'case-1',
+                    'street1': '1 Main',
+                    'street2': '',
+                    'city': 'NYC',
+                    'state': 'NY',
+                    'postalcode': '10001',
+                    'lat': '',
+                    'lon': '',
+                },
+            ])
+
+            def fake_geocode_record(row, addr_cols):
+                row = dict(row)
+                row['lat'] = '40.5'
+                row['lon'] = '-73.5'
+                row['house_number'] = '1'
+                return row
+
+            count = geocode_staging_addresses_csv(
+                pub_dir,
+                geocode_workers=1,
+                census_batch_chunk_size=2500,
+                geocode_record_fn=fake_geocode_record,
+                geocode_using_census_batch_fn=mock.Mock(),
+            )
+            self.assertEqual(count, 1)
+            self.assertTrue(os.path.exists(os.path.join(pub_dir, GEOCODED_STAGING_ADDRESSES_CSV)))
+            staging_rows, _ = read_staging_addresses_csv(pub_dir)
+            self.assertEqual(staging_rows[0]['lat'], '40.5')
+
+    def test_geocode_staging_geocodes_all_rows_not_only_missing_lat(self):
+        with tempfile.TemporaryDirectory() as pub_dir:
+            self._write_staging_csv(pub_dir, [
+                {
+                    'indexnumberid': 'has-lat',
+                    'street1': '10 Main',
+                    'street2': '',
+                    'city': 'NYC',
+                    'state': 'NY',
+                    'postalcode': '10001',
+                    'lat': '40.0',
+                    'lon': '-74.0',
+                },
+                {
+                    'indexnumberid': 'no-lat',
+                    'street1': '20 Main',
+                    'street2': '',
+                    'city': 'NYC',
+                    'state': 'NY',
+                    'postalcode': '10002',
+                    'lat': '',
+                    'lon': '',
+                },
+            ])
+            seen_ids = []
+
+            def fake_geocode_record(row, addr_cols):
+                seen_ids.append(row['indexnumberid'])
+                row = dict(row)
+                row['lat'] = f"40.{row['indexnumberid']}"
+                row['lon'] = '-73.0'
+                return row
+
+            geocode_staging_addresses_csv(
+                pub_dir,
+                geocode_workers=1,
+                census_batch_chunk_size=2500,
+                geocode_record_fn=fake_geocode_record,
+                geocode_using_census_batch_fn=mock.Mock(),
+            )
+            self.assertEqual(seen_ids, ['has-lat', 'no-lat'])
+
+    def test_geocode_staging_stage_records_manifest(self):
+        fake_manifest = mock.Mock()
+        with tempfile.TemporaryDirectory() as pub_dir:
+            with mock.patch(
+                'lib.etl_stages.geocode_staging_addresses_csv',
+                return_value=3,
+            ) as geocode_mock:
+                count = geocode_staging_csvs(
+                    fake_manifest, pub_dir, geocode_workers=2, census_batch_chunk_size=1000,
+                )
+        self.assertEqual(count, 3)
+        geocode_mock.assert_called_once_with(pub_dir, 2, 1000)
+        fake_manifest.upsert_step.assert_any_call('geocode_staging', 'running')
+        fake_manifest.upsert_step.assert_any_call(
+            'geocode_staging',
+            'completed',
+            details={'geocoded_row_count': 3},
+        )
 
 
 class GeocodeStageIntegrationTests(unittest.TestCase):

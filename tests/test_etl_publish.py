@@ -9,10 +9,14 @@ from lib.etl_publish import (
     published_keys_for_encryption,
     staging_tables_with_rows,
 )
+from lib.etl import oca_etl
 from lib.etl_stages import (
+    export_staging_csvs,
     geocode_addresses,
+    geocode_staging_csvs,
     normalize_public_s3_encryption,
     publish_public_artifacts,
+    upload_staging_csvs,
 )
 
 
@@ -124,6 +128,89 @@ class PublishPublicArtifactsTests(unittest.TestCase):
         export_idx = call_order.index('export_view')
         self.assertLess(views_idx, core_idx)
         self.assertLess(core_idx, export_idx)
+
+
+class StagingPipelineStageTests(unittest.TestCase):
+    def test_export_staging_records_manifest(self):
+        fake_manifest = mock.Mock()
+        fake_db = mock.Mock()
+        with mock.patch('lib.etl_stages.export_staging_to_csv') as export_mock:
+            export_staging_csvs(fake_manifest, fake_db, '/tmp/pub', csv_preprocess_chunk_size=500)
+        export_mock.assert_called_once_with(
+            fake_db,
+            '/tmp/pub',
+            csv_preprocess_chunk_size=500,
+            upload=False,
+        )
+        fake_manifest.upsert_step.assert_any_call('export_staging', 'running')
+        fake_manifest.upsert_step.assert_any_call('export_staging', 'completed')
+
+    def test_upload_staging_skips_geocoded_intermediate_csv(self):
+        fake_manifest = mock.Mock()
+        with tempfile.TemporaryDirectory() as pub_dir:
+            for name in (
+                'oca_index_staging.csv',
+                'oca_addresses_staging.csv',
+                'oca_addresses_staging_geocoded.csv',
+            ):
+                with open(os.path.join(pub_dir, name), 'w', encoding='utf-8') as handle:
+                    handle.write('h\n')
+            uploaded_names = []
+            with mock.patch('lib.etl_stages.upload_public_file', side_effect=lambda name, *a, **k: uploaded_names.append(name)), \
+                 mock.patch('lib.etl_stages.multiprocessing.Pool') as pool_mock:
+                pool_mock.return_value.__enter__.return_value.starmap.side_effect = (
+                    lambda fn, iterable: [fn(*args) for args in iterable]
+                )
+                upload_staging_csvs(
+                    fake_manifest, pub_dir, '2',
+                    {'aws_bucket_name': 'b', 'aws_id': 'i', 'aws_key': 'k'},
+                    'refactor/',
+                )
+        uploaded_names = sorted(uploaded_names)
+        self.assertEqual(
+            uploaded_names,
+            ['oca_addresses_staging.csv', 'oca_index_staging.csv'],
+        )
+        fake_manifest.upsert_step.assert_any_call('upload_staging', 'running')
+        fake_manifest.upsert_step.assert_any_call(
+            'upload_staging',
+            'completed',
+            details={'uploaded_file_count': 2},
+        )
+
+
+class OcaEtlPipelineTests(unittest.TestCase):
+    def test_weekly_etl_uses_csv_geocode_not_post_promotion_rds_geocode(self):
+        selection = mock.Mock(
+            selected_zip_files=['file.zip'],
+            skipped_reprocess_files=[],
+            new_file_set={'file.zip'},
+            reprocess_file_set=set(),
+        )
+        with mock.patch('lib.etl.EtlRunManifest') as manifest_cls, \
+             mock.patch('lib.etl.Database'), \
+             mock.patch('lib.etl.DuckDB'), \
+             mock.patch('lib.etl.Sftp'), \
+             mock.patch('lib.etl.S3'), \
+             mock.patch('lib.etl.make_dir', side_effect=lambda x: x), \
+             mock.patch('lib.etl.select_input_files', return_value=selection), \
+             mock.patch('lib.etl.download_selected_files'), \
+             mock.patch('lib.etl.parse_xml_to_staging'), \
+             mock.patch('lib.etl.export_staging_csvs') as export_mock, \
+             mock.patch('lib.etl.geocode_staging_csvs') as geocode_staging_mock, \
+             mock.patch('lib.etl.upload_staging_csvs') as upload_mock, \
+             mock.patch('lib.etl.import_and_promote_staging'), \
+             mock.patch('lib.etl_stages.geocode_addresses') as geocode_rds_mock, \
+             mock.patch('lib.etl.publish_public_artifacts', return_value=[]), \
+             mock.patch('lib.etl.normalize_public_s3_encryption'), \
+             mock.patch('lib.etl.upload_private_source_files'), \
+             mock.patch('pathlib.Path.unlink'):
+            oca_etl({}, {}, {}, '2', {}, runtime_args={'geocode_workers': 2, 'census_batch_chunk_size': 1000})
+
+        export_mock.assert_called_once()
+        geocode_staging_mock.assert_called_once()
+        upload_mock.assert_called_once()
+        geocode_rds_mock.assert_not_called()
 
 
 class GeocodeAddressesTests(unittest.TestCase):

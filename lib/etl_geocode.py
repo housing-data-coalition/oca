@@ -1,5 +1,8 @@
+import csv
 import functools
 import multiprocessing
+import os
+import shutil
 from itertools import repeat
 
 import numpy as np
@@ -19,6 +22,9 @@ GEOCODE_ADDRESS_COLUMNS = [
 ]
 
 GEOCODE_EXPORT_COLUMNS = GEOCODE_ADDRESS_COLUMNS
+
+STAGING_ADDRESSES_CSV = 'oca_addresses_staging.csv'
+GEOCODED_STAGING_ADDRESSES_CSV = 'oca_addresses_staging_geocoded.csv'
 
 
 def _stringify_row_values(row):
@@ -175,3 +181,71 @@ def upsert_geocoded_addresses(db, rows):
     db.insert_rows(_prepare_rows_for_db(rows), 'oca_addresses_geocode_staging')
     db.execute_sql_file('upsert_geocoded_addresses.sql')
     return len(rows)
+
+
+def read_staging_addresses_csv(pub_dir):
+    """Read ``oca_addresses_staging.csv`` rows as string-normalized dicts."""
+    path = os.path.join(pub_dir, STAGING_ADDRESSES_CSV)
+    if not os.path.exists(path):
+        return [], []
+
+    with open(path, 'r', encoding='utf-8', newline='') as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = list(reader.fieldnames or [])
+        rows = [_stringify_row_values(row) for row in reader]
+    return rows, fieldnames
+
+
+def _merge_geocoded_row(original, geocoded):
+    merged = dict(original)
+    for col in GEOCODE_ADDRESS_COLUMNS:
+        if col in geocoded:
+            merged[col] = geocoded[col]
+    return merged
+
+
+def write_geocoded_staging_csv(pub_dir, rows, fieldnames, dest_filename=GEOCODED_STAGING_ADDRESSES_CSV):
+    """Write geocoded address rows to a staging CSV (default: intermediate geocoded file)."""
+    path = os.path.join(pub_dir, dest_filename)
+    if not fieldnames:
+        fieldnames = list(GEOCODE_ADDRESS_COLUMNS)
+
+    with open(path, 'w', encoding='utf-8', newline='') as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction='ignore')
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({col: row.get(col, '') for col in fieldnames})
+
+
+def geocode_staging_addresses_csv(
+    pub_dir,
+    geocode_workers,
+    census_batch_chunk_size,
+    geocode_record_fn=geocode_record,
+    geocode_using_census_batch_fn=geocode_using_census_batch,
+):
+    """
+    Geocode every row in ``oca_addresses_staging.csv``, write
+    ``oca_addresses_staging_geocoded.csv``, then overwrite the staging file.
+    """
+    rows, fieldnames = read_staging_addresses_csv(pub_dir)
+    if not rows:
+        return 0
+
+    geocoded_rows = geocode_candidate_records(
+        rows,
+        geocode_workers,
+        census_batch_chunk_size,
+        pub_dir,
+        geocode_record_fn=geocode_record_fn,
+        geocode_using_census_batch_fn=geocode_using_census_batch_fn,
+    )
+    merged_rows = [
+        _merge_geocoded_row(original, geocoded)
+        for original, geocoded in zip(rows, geocoded_rows)
+    ]
+    write_geocoded_staging_csv(pub_dir, merged_rows, fieldnames)
+    staging_path = os.path.join(pub_dir, STAGING_ADDRESSES_CSV)
+    geocoded_path = os.path.join(pub_dir, GEOCODED_STAGING_ADDRESSES_CSV)
+    shutil.copy2(geocoded_path, staging_path)
+    return len(merged_rows)
