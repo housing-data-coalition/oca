@@ -47,20 +47,6 @@ class RunManifestTests(unittest.TestCase):
         )
         self.assertEqual(selected, ["LandlordTenant.Incr.2024-03-01.zip"])
 
-    def test_advisory_lock_failure_raises(self):
-        fake_db = FakeDb()
-        fake_db.fetch_one_queue = [(12345,), (False,)]
-        manifest = EtlRunManifest(
-            db=fake_db,
-            schema_name="oca_refactor",
-            s3_prefix="refactor/dev",
-            mode="2",
-            reprocess_glob="",
-            force_reprocess=False,
-        )
-        with self.assertRaises(RuntimeError):
-            manifest.acquire_lock()
-
 
 if __name__ == "__main__":
     unittest.main()

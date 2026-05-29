@@ -23,26 +23,9 @@ class EtlRunManifest:
         self.reprocess_glob = reprocess_glob or ''
         self.force_reprocess = force_reprocess
         self.run_id = str(uuid.uuid4())
-        self.lock_key = None
-        self.lock_acquired = False
 
     def setup_tables(self):
         self.db.execute_sql_file('create_etl_manifest_tables.sql')
-
-    def acquire_lock(self):
-        row = self.db.sql_fetch_one(
-            f"SELECT hashtext('oca_etl:' || {self._literal(self.schema_name)})::bigint"
-        )
-        self.lock_key = row[0]
-        locked = self.db.sql_fetch_one(f"SELECT pg_try_advisory_lock({self.lock_key})")
-        self.lock_acquired = bool(locked and locked[0])
-        if not self.lock_acquired:
-            raise RuntimeError(f"Another ETL run is already active for schema '{self.schema_name}'.")
-
-    def release_lock(self):
-        if self.lock_acquired and self.lock_key is not None:
-            self.db.sql_fetch_one(f"SELECT pg_advisory_unlock({self.lock_key})")
-            self.lock_acquired = False
 
     def create_run(self):
         payload = {

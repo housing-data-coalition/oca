@@ -43,7 +43,7 @@ Each run is orchestrated sequentially in `oca_etl()`. See [`etl_stages.py`](etl_
 
 - [`sftp.py`](sftp.py) — list and download raw XML zip files from OCA SFTP.
 - [`s3.py`](s3.py) — S3 upload/download, encryption normalization (`update_encryption`).
-- [`database.py`](database.py) — PostgreSQL connection (NYCDB-derived), schema `search_path`, transactions, `aws_s3` import/export helpers.
+- [`database.py`](database.py) — PostgreSQL connection (NYCDB-derived), schema `search_path`, TCP keepalives, automatic reconnect after idle drops, transactions, `aws_s3` import/export helpers.
 
 ### Parse and local staging
 
@@ -54,9 +54,9 @@ Each run is orchestrated sequentially in `oca_etl()`. See [`etl_stages.py`](etl_
 
 ### ETL orchestration
 
-- [`etl.py`](etl.py) — run orchestrator, advisory lock, manifest lifecycle, stage sequencing.
+- [`etl.py`](etl.py) — run orchestrator, manifest lifecycle, stage sequencing.
 - [`etl_constants.py`](etl_constants.py) — table list, zip patterns, S3 folder constants.
-- [`etl_run_manifest.py`](etl_run_manifest.py) — `etl_runs` / `etl_files` / `etl_steps` bookkeeping; schema-scoped advisory lock.
+- [`etl_run_manifest.py`](etl_run_manifest.py) — `etl_runs` / `etl_files` / `etl_steps` bookkeeping.
 - [`etl_helpers.py`](etl_helpers.py) — paths, CSV row checks, PLUTO download, date badge files.
 - [`etl_csv.py`](etl_csv.py) — streaming CSV normalization for tables not handled at export time.
 - [`etl_promotion.py`](etl_promotion.py) — atomic `promote_staging_to_main()`; count/checksum hooks for validation.
@@ -90,7 +90,7 @@ Legacy/manual only: `reset_addresses_table.sql`, `update_metadata.sql`.
 ## Idempotency and run control
 
 - **Manifest** — each run records status in `etl_runs`, per-file progress in `etl_files`, and stage checkpoints in `etl_steps`.
-- **Advisory lock** — one concurrent writer per schema (`pg_try_advisory_lock`).
+- **Connection resilience** — TCP keepalives and `ensure_connection()` reconnect before RDS-heavy stages after long parse/upload/geocode gaps.
 - **Reprocess** — `REPROCESS_GLOB` selects S3 private backups; manifest skips completed files unless `FORCE_REPROCESS=true`.
 - **Schema isolation** — `DB_SCHEMA` + `S3_PREFIX` for refactor/E2E without touching production paths.
 - **Promotion** — scoped delete + insert / upsert in one transaction; safe to retry after import failure.

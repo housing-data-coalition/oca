@@ -109,6 +109,9 @@ Optional env vars (and matching `oca_update.py` CLI flags) tune isolation, repla
 | `PARSE_WRITE_BATCH_ENABLED` | Buffer parser DuckDB writes in txn windows | `1` (on) |
 | `PARSE_WRITE_BATCH_SIZE` | Max buffered INSERTs before flush | `128` |
 | `PARSE_WRITE_FLUSH_EVERY_N_CASES` | Flush cadence per parse worker | `16` |
+| `DB_KEEPALIVES_*` | PostgreSQL TCP keepalive tuning (see `.env.example`) | RDS-friendly defaults |
+
+Long runs (multi-hour XML parse, S3 upload, geocoding) may idle the RDS connection; the pipeline uses TCP keepalives and automatic reconnect (`ensure_connection`) before RDS-heavy stages. Optional `DB_KEEPALIVES_IDLE` / `DB_KEEPALIVES_INTERVAL` / `DB_KEEPALIVES_COUNT` override libpq defaults.
 
 Use an isolated `S3_PREFIX` (e.g. `refactor/`) for refactor and end-to-end test runs so reads and writes stay out of production public paths. Memory target per job is **≤ 2 GiB**; lower `GEOCODE_WORKERS` if geocoding approaches the limit.
 
