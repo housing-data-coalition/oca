@@ -1,3 +1,4 @@
+import logging
 import os
 import pandas as pd
 from pandas.util import hash_pandas_object
@@ -8,8 +9,18 @@ import censusgeocode as cg
 
 from .placename_to_borocode import placename_to_borocode
 
+
+def suppress_geosupport_logging():
+    """Geosupport logs expected geocode failures at ERROR; row status captures outcomes instead."""
+    gs_logger = logging.getLogger('geosupport.geosupport')
+    gs_logger.handlers.clear()
+    gs_logger.setLevel(logging.CRITICAL)
+    gs_logger.propagate = False
+
+
 # initialize geosupport
 g = Geosupport()
+suppress_geosupport_logging()
 
 def parse_address(addr):
     """parses full address string and returns dict of address components needed for geocoding

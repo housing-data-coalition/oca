@@ -1,12 +1,11 @@
 import functools
 import multiprocessing
-import os
 from itertools import repeat
 
 import numpy as np
 import pandas as pd
 
-from .geocode_record import geocode_record, geocode_using_census_batch
+from .geocode_record import geocode_record, geocode_using_census_batch, suppress_geosupport_logging
 
 ADDRESS_ROW_KEY_COLUMNS = [
     'indexnumberid', 'street1', 'street2', 'city', 'state', 'postalcode',
@@ -57,7 +56,8 @@ def address_row_key(row):
 
 def row_needs_geocode(row):
     """Mirror select_addresses_needing_geocode.sql for unit tests."""
-    return not _has_lat(row.get('lat')) and str(row.get('house_number') or '').strip() != ''
+    # return not _has_lat(row.get('lat')) and str(row.get('house_number') or '').strip() != ''
+    return not _has_lat(row.get('lat'))
 
 
 def _rows_from_fetchall(rows):
@@ -86,6 +86,14 @@ def _prepare_rows_for_db(rows):
     return prepared
 
 
+def _init_geosupport_worker():
+    suppress_geosupport_logging()
+
+
+def _geosupport_worker(record):
+    return geocode_record(record, addr_cols=['street1', 'city', 'postalcode'])
+
+
 def _run_geosupport(records, geocode_workers, geocode_record_fn):
     geocode_one = functools.partial(
         geocode_record_fn,
@@ -95,9 +103,13 @@ def _run_geosupport(records, geocode_workers, geocode_record_fn):
     if not use_pool:
         return [geocode_one(record) for record in records]
 
+    suppress_geosupport_logging()
     worker_count = min(geocode_workers, multiprocessing.cpu_count())
-    with multiprocessing.Pool(processes=worker_count) as pool:
-        return pool.map(geocode_one, records, 10000)
+    with multiprocessing.Pool(
+        processes=worker_count,
+        initializer=_init_geosupport_worker,
+    ) as pool:
+        return pool.map(_geosupport_worker, records, 10000)
 
 
 def _run_census_batch(still_missing, census_batch_chunk_size, pub_dir, geocode_using_census_batch_fn):
@@ -129,12 +141,14 @@ def geocode_candidate_records(
     if not records:
         return []
 
+    print(f'Geocoding {len(records)} addresses using Geosupport')
     geosupport_results = _run_geosupport(records, geocode_workers, geocode_record_fn)
 
     still_missing = [row for row in geosupport_results if not _has_lat(row.get('lat'))]
     if not still_missing:
         return geosupport_results
 
+    print(f'Geocoding {len(still_missing)} addresses using Census batch')
     census_chunks = _run_census_batch(
         still_missing,
         census_batch_chunk_size,
@@ -156,6 +170,8 @@ def upsert_geocoded_addresses(db, rows):
     if not rows:
         return 0
 
+    # Large backfills can exceed default RDS statement_timeout on staging insert + merge.
+    db.set_statement_timeout()
     db.execute_sql_file('create_geocode_staging_table.sql')
     db.insert_rows(_prepare_rows_for_db(rows), 'oca_addresses_geocode_staging')
     db.execute_sql_file('upsert_geocoded_addresses.sql')

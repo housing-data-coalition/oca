@@ -27,5 +27,5 @@ SELECT
   lon,
   zip_code
 FROM oca_addresses
-WHERE lat IS NULL
-  AND COALESCE(house_number, '') <> '';
+WHERE lat IS NULL;
+  -- AND COALESCE(house_number, '') <> '';

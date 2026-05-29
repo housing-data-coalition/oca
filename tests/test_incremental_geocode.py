@@ -227,6 +227,7 @@ class UpsertGeocodedAddressesTests(unittest.TestCase):
         count = upsert_geocoded_addresses(fake_db, rows)
 
         self.assertEqual(count, 1)
+        fake_db.set_statement_timeout.assert_called_once()
         fake_db.execute_sql_file.assert_any_call('create_geocode_staging_table.sql')
         fake_db.insert_rows.assert_called_once()
         fake_db.execute_sql_file.assert_any_call('upsert_geocoded_addresses.sql')

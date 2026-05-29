@@ -618,5 +618,5 @@ def parse_file(xml_file, staging_db, extract_date, num_threads=8):
         flush_write_buffer(thread_db)
         thread_db.close()
     
-    print(f"Processed {total_cases} cases with {num_threads} threads")
+    print(f"\nProcessed {total_cases} cases with {num_threads} threads")
 

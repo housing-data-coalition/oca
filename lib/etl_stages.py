@@ -226,6 +226,7 @@ def import_and_promote_staging(manifest, db, pub_dir, s3_args, s3_prefix, select
     imported_staging_tables = staging_tables_with_rows(pub_dir)
     staging_tables = [t + '_staging' for t in OCA_TABLES]
     manifest.upsert_step('promote_staging', 'running')
+    db.set_statement_timeout()
     ensure_core_tables_exist(db, expected_schema)
     db.execute_sql_file('create_tables_staging.sql')
     for t in staging_tables:
@@ -280,13 +281,13 @@ def geocode_and_publish_addresses(
 ):
     manifest.upsert_step('geocode_refresh', 'running')
     candidates = fetch_addresses_needing_geocode(db)
-    print(f'Geocoding {len(candidates)} addresses missing lat/lon')
     geocoded_rows = geocode_candidate_records(
         candidates,
         geocode_workers,
         census_batch_chunk_size,
         pub_dir,
     )
+    print(f'Upserting {len(geocoded_rows)} geocoded addresses')
     upsert_geocoded_addresses(db, geocoded_rows)
 
     publish_addresses = should_publish_address_exports(
@@ -294,6 +295,7 @@ def geocode_and_publish_addresses(
     )
     published_keys = list(published_core_keys or [])
     if publish_addresses:
+        print('Publishing address CSV/views')
         csv_filepath = os.path.join(pub_dir, "oca_addresses_private.csv")
         db.export_csv('oca_addresses', csv_filepath)
         db.execute_sql_file('create_addresses_views.sql')

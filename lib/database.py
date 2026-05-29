@@ -1,10 +1,9 @@
 import os
-import urllib.parse
 from contextlib import contextmanager
 
 import psycopg2
 import psycopg2.extras
-from psycopg2 import InterfaceError, OperationalError, sql
+from psycopg2 import Error, InterfaceError, OperationalError, sql
 
 
 def _env_int(name, default):
@@ -12,6 +11,11 @@ def _env_int(name, default):
     if raw is None or str(raw).strip() == '':
         return default
     return int(raw)
+
+
+def default_statement_timeout_ms():
+    """RDS statement_timeout for long-running ETL SQL (override via DB_STATEMENT_TIMEOUT_MS)."""
+    return _env_int('DB_STATEMENT_TIMEOUT_MS', 3_600_000)
 
 
 def _connect_params():
@@ -70,19 +74,51 @@ class Database:
                 pass
             self.conn = None
 
+    def _connection_is_closed(self):
+        if self.conn is None:
+            return True
+        closed = getattr(self.conn, 'closed', None)
+        if isinstance(closed, bool):
+            return closed
+        if isinstance(closed, int):
+            return closed != 0
+        return False
+
+    def _safe_rollback(self):
+        if self._connection_is_closed():
+            self._close_connection()
+            return
+        try:
+            self.conn.rollback()
+        except (InterfaceError, OperationalError, Error, AttributeError):
+            self._close_connection()
+
+    def set_statement_timeout(self, timeout_ms=None):
+        timeout = timeout_ms if timeout_ms is not None else default_statement_timeout_ms()
+        self.sql(f"SET statement_timeout = '{timeout}'")
+
     def ensure_connection(self):
         """Ping the connection; reconnect if the server closed an idle session.
 
         Returns True if a new connection was opened, False if the existing one is healthy.
         """
+        if self._connection_is_closed():
+            self._connect()
+            return True
         try:
             with self.conn.cursor() as curs:
                 curs.execute('SELECT 1')
             return False
-        except (OperationalError, InterfaceError, AttributeError):
-            self._close_connection()
-            self._connect()
-            return True
+        except Error:
+            try:
+                self.conn.rollback()
+                with self.conn.cursor() as curs:
+                    curs.execute('SELECT 1')
+                return False
+            except (OperationalError, InterfaceError, Error, AttributeError):
+                self._close_connection()
+                self._connect()
+                return True
 
     def __exit__(self, exc_type, exc_value, traceback):
         self._close_connection()
@@ -110,8 +146,13 @@ class Database:
         Set autocommit to run queries like VACUUM FULL [1]
         [1]: https://til.codeinthehole.com/posts/about-a-gotcha-with-psycopg2s-autocommit-handling/
         """
-        self.execute(SQL, autocommit=autocommit)
-        self.conn.commit()
+        self.ensure_connection()
+        try:
+            self.execute(SQL, autocommit=autocommit)
+            self.conn.commit()
+        except Exception:
+            self._safe_rollback()
+            raise
 
     @contextmanager
     def transaction(self):
@@ -121,7 +162,7 @@ class Database:
             yield self
             self.conn.commit()
         except Exception:
-            self.conn.rollback()
+            self._safe_rollback()
             raise
 
     def sql_fetch_one(self, SQL):
@@ -141,25 +182,32 @@ class Database:
         with open(file_path, 'r', encoding='utf-8') as f:
             return self.sql_fetch_all(f.read())
 
-    def insert_rows(self, rows, table_name):
+    def insert_rows(self, rows, table_name, page_size=1000):
         """
         Inserts many rows, all in the same transaction.
         """
+        if not rows:
+            return
+
         self.ensure_connection()
-        with self.conn.cursor() as curs:
-            sql_str, template = insert_many(table_name, rows)
-            try:
-                psycopg2.extras.execute_values(
-                    curs,
-                    sql_str,
-                    rows,
-                    template=template,
-                    page_size=len(rows)
-                )
-            except psycopg2.DataError:
-                print(rows)  # useful for debugging
-                raise
-        self.conn.commit()
+        try:
+            with self.conn.cursor() as curs:
+                sql_str, template = insert_many(table_name, rows)
+                try:
+                    psycopg2.extras.execute_values(
+                        curs,
+                        sql_str,
+                        rows,
+                        template=template,
+                        page_size=min(page_size, len(rows)),
+                    )
+                except psycopg2.DataError:
+                    print(rows)  # useful for debugging
+                    raise
+            self.conn.commit()
+        except Exception:
+            self._safe_rollback()
+            raise
 
     def execute_sql_file(self, sql_file, commit=True):
         """

@@ -1,7 +1,8 @@
 import unittest
 from unittest import mock
 
-from psycopg2 import OperationalError
+import psycopg2
+from psycopg2 import InterfaceError, OperationalError
 
 from lib.database import Database, _connect_params
 
@@ -29,6 +30,7 @@ class EnsureConnectionTests(unittest.TestCase):
     @staticmethod
     def _mock_connection():
         conn = mock.Mock()
+        conn.closed = 0
         cursor = mock.MagicMock()
         cursor.__enter__.return_value = cursor
         cursor.__exit__.return_value = False
@@ -96,6 +98,7 @@ class EnsureConnectionTests(unittest.TestCase):
         dead_cursor = dead_conn.cursor.return_value.__enter__.return_value
         dead_cursor.execute.side_effect = [
             OperationalError('EOF detected'),
+            OperationalError('EOF detected'),
         ]
 
         live_conn = self._mock_connection()
@@ -109,6 +112,42 @@ class EnsureConnectionTests(unittest.TestCase):
         db.sql('SELECT 2')
 
         live_conn.commit.assert_called()
+
+    @mock.patch('lib.database.psycopg2.connect')
+    def test_ensure_connection_recovers_from_aborted_transaction(self, connect_mock):
+        conn = self._mock_connection()
+        connect_mock.return_value = conn
+        db = Database(db_url='postgres://example')
+
+        cursor = conn.cursor.return_value.__enter__.return_value
+        cursor.execute.side_effect = [
+            psycopg2.errors.InFailedSqlTransaction('current transaction is aborted'),
+            None,
+        ]
+
+        reconnected = db.ensure_connection()
+
+        self.assertFalse(reconnected)
+        conn.rollback.assert_called_once()
+        self.assertEqual(cursor.execute.call_count, 2)
+
+    @mock.patch('lib.database.psycopg2.connect')
+    def test_sql_reraises_query_error_when_rollback_fails_on_closed_connection(self, connect_mock):
+        conn = self._mock_connection()
+        conn.closed = 0
+        connect_mock.return_value = conn
+        db = Database(db_url='postgres://example')
+
+        cursor = conn.cursor.return_value.__enter__.return_value
+        query_error = OperationalError('server closed the connection unexpectedly')
+        cursor.execute.side_effect = query_error
+        conn.rollback.side_effect = InterfaceError('connection already closed')
+
+        with self.assertRaises(OperationalError) as ctx:
+            db.sql('SELECT 1')
+
+        self.assertIs(ctx.exception, query_error)
+        self.assertIsNone(db.conn)
 
 
 if __name__ == '__main__':
