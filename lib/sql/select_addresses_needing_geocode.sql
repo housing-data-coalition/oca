@@ -28,4 +28,3 @@ SELECT
   zip_code
 FROM oca_addresses
 WHERE lat IS NULL;
-  -- AND COALESCE(house_number, '') <> '';

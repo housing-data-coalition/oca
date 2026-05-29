@@ -56,7 +56,6 @@ def address_row_key(row):
 
 def row_needs_geocode(row):
     """Mirror select_addresses_needing_geocode.sql for unit tests."""
-    # return not _has_lat(row.get('lat')) and str(row.get('house_number') or '').strip() != ''
     return not _has_lat(row.get('lat'))
 
 
