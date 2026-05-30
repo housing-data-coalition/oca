@@ -145,13 +145,14 @@ class StagingPipelineStageTests(unittest.TestCase):
         fake_manifest.upsert_step.assert_any_call('export_staging', 'running')
         fake_manifest.upsert_step.assert_any_call('export_staging', 'completed')
 
-    def test_upload_staging_skips_geocoded_intermediate_csv(self):
+    def test_upload_staging_whitelist_skips_geocoded_and_temp_csvs(self):
         fake_manifest = mock.Mock()
         with tempfile.TemporaryDirectory() as pub_dir:
             for name in (
                 'oca_index_staging.csv',
                 'oca_addresses_staging.csv',
                 'oca_addresses_staging_geocoded.csv',
+                'temp_11980619120169245792.csv',
             ):
                 with open(os.path.join(pub_dir, name), 'w', encoding='utf-8') as handle:
                     handle.write('h\n')

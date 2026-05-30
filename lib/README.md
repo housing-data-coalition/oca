@@ -38,7 +38,7 @@ Each weekly run is orchestrated sequentially in `oca_etl()`. There is **no** pos
 | Parse | `parsers.py`, `duckdb_database.py` | Streaming XML parse into local DuckDB (`staging.duckdb`); batched writes via `parse_write_buffer.py`. Address rows have no lat/lon until CSV geocode. |
 | Export staging | `etl_stages.export_staging_csvs` | DuckDB `COPY` with Postgres-compatible transforms; manifest step `export_staging`. No S3 upload yet. |
 | Geocode staging | `etl_geocode.geocode_staging_addresses_csv`, `etl_stages.geocode_staging_csvs` | Geocode **every** row in `oca_addresses_staging.csv`; write `oca_addresses_staging_geocoded.csv`, copy over staging CSV; manifest step `geocode_staging`. |
-| Upload staging | `etl_stages.upload_staging_csvs` | Upload `*_staging.csv` to S3 `public/`; **excludes** `oca_addresses_staging_geocoded.csv`; manifest step `upload_staging`. |
+| Upload staging | `etl_stages.upload_staging_csvs`, `etl_publish.list_staging_csvs_in_dir` | Upload only whitelisted `{table}_staging.csv` files (from `OCA_TABLES`); ignores geocoder temps and other junk; manifest step `upload_staging`. |
 | Import + promote | `etl_stages.import_and_promote_staging`, `etl_promotion.py` | Bootstrap core tables, import staging CSVs via `aws_s3`, normalize, promote; batch `geom` UPDATE from lat/lon. |
 | Publish public | `etl_stages.publish_public_artifacts` | `create_addresses_views.sql` (views only); export all `OCA_TABLES` and address views; upload date badge files. |
 | Normalize encryption | `etl_stages.normalize_public_s3_encryption` | SSE-S3 on published keys except `oca_addresses_private.csv`. |

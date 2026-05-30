@@ -23,11 +23,11 @@ from .etl_promotion import promote_staging_to_main
 from .etl_publish import (
     ADDRESS_VIEW_EXPORTS,
     export_table_to_s3,
+    list_staging_csvs_in_dir,
     normalize_published_s3_encryption,
     staging_tables_with_rows,
 )
 from .etl_geocode import (
-    GEOCODED_STAGING_ADDRESSES_CSV,
     fetch_addresses_needing_geocode,
     geocode_candidate_records,
     geocode_staging_addresses_csv,
@@ -175,7 +175,7 @@ def export_staging_to_csv(
     if not upload:
         return
 
-    public_files = [i for i in os.listdir(pub_dir) if i.endswith('.csv')]
+    public_files = list_staging_csvs_in_dir(pub_dir)
     with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
         files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args), repeat(s3_prefix))
         pool.starmap(upload_public_file, files_zip)
@@ -212,10 +212,7 @@ def geocode_staging_csvs(manifest, pub_dir, geocode_workers, census_batch_chunk_
 def upload_staging_csvs(manifest, pub_dir, mode, s3_args, s3_prefix):
     """Upload preprocessed staging CSVs to S3 ``public/``."""
     manifest.upsert_step('upload_staging', 'running')
-    public_files = [
-        name for name in os.listdir(pub_dir)
-        if name.endswith('.csv') and name != GEOCODED_STAGING_ADDRESSES_CSV
-    ]
+    public_files = list_staging_csvs_in_dir(pub_dir)
     with multiprocessing.Pool(processes=min((2, multiprocessing.cpu_count()))) as pool:
         files_zip = zip(public_files, repeat(pub_dir), repeat(mode), repeat(s3_args), repeat(s3_prefix))
         pool.starmap(upload_public_file, files_zip)

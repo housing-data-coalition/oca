@@ -8,6 +8,19 @@ from .etl_helpers import csv_has_rows, s3_key
 PRIVATE_ADDRESS_CSV = 'oca_addresses_private.csv'
 
 
+def staging_csv_filenames():
+    """Expected local/S3 filenames for RDS staging import (one per OCA table)."""
+    return [f"{table}_staging.csv" for table in OCA_TABLES]
+
+
+def list_staging_csvs_in_dir(pub_dir):
+    """Staging CSVs present in ``pub_dir``; whitelist only (ignores geocoder temps, etc.)."""
+    return sorted(
+        name for name in staging_csv_filenames()
+        if os.path.isfile(os.path.join(pub_dir, name))
+    )
+
+
 def staging_tables_with_rows(pub_dir):
     """Main table names whose staging CSV had at least one data row this run."""
     tables = []
