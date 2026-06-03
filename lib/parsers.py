@@ -1,9 +1,14 @@
-import frogress
-from lxml import etree
-import threading
+import logging
 import queue
+import threading
+
+from lxml import etree
 
 from .parse_write_buffer import attach_write_buffer, flush_write_buffer, staging_execute
+
+logger = logging.getLogger(__name__)
+
+PARSE_PROGRESS_INTERVAL = 1000
 
 NAMESPACE = '{http://www.example.org/LandlordTenantExtractSchema}'
 
@@ -594,11 +599,13 @@ def parse_file(xml_file, staging_db, extract_date, num_threads=8):
     
     
     total_cases = 0
-    for _, case in frogress.bar(context):
+    for _, case in context:
         case_copy = etree.fromstring(etree.tostring(case))
         case_queue.put(case_copy)
         total_cases += 1
-        
+        if total_cases % PARSE_PROGRESS_INTERVAL == 0:
+            logger.info("Parsed %s cases", total_cases)
+
         # Clear the case element to free memory
         case.clear()
         while case.getprevious() is not None:
@@ -618,5 +625,5 @@ def parse_file(xml_file, staging_db, extract_date, num_threads=8):
         flush_write_buffer(thread_db)
         thread_db.close()
     
-    print(f"\nProcessed {total_cases} cases with {num_threads} threads")
+    logger.info("Processed %s cases with %s threads", total_cases, num_threads)
 

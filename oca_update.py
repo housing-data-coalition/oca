@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 
-import dotenv
-import os
 import argparse
+import logging
+import os
 from pathlib import Path
+
+import dotenv
 
 from lib.etl import oca_etl
 
@@ -34,6 +36,7 @@ def parse_args():
 	return parser.parse_args()
 
 def main():
+	logging.basicConfig(level=logging.INFO, format="%(message)s")
 	args = parse_args()
 
 	db_args = {
