@@ -1,27 +1,72 @@
 # configs and git
 .git/
+.gitattributes
 .gitignore
+.github/
 .idea/
+.cursor/
 
 # python and docker
 .venv/
 .env
+.env.*
+.env.example
 Dockerfile
 docker-compose.yml
 dockerhub-publish.sh
 __pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+.ipynb_checkpoints
 
+# credentials and keys (never ship in image layers)
+*.pem
+*.key
+*.p12
+*.pfx
+**/id_rsa
+**/id_rsa.pub
+**/.ssh/
+*kubeconfig*
+secrets/
+credentials/
+
+# ops / deploy (runtime uses env vars, not these files)
+k8s/
 notebooks/
 docs/
-k8s/
+tests/
+hooks/
+README.md
+LICENSE
+run.sh
+geocoder_test.py
+example.output.txt
+requirements.txt
+.python-version
 
-# data folders
+# data folders and local databases
 staging.db
+staging.duckdb*
 data/
 data-raw/
 data-clean/
+data-private/
+data-public/
 lib/data-private/
 lib/data-public/
+
+# logs and temp
+*.log
+*.tmp
 
 # macos
 .DS_Store

@@ -23,3 +23,4 @@ data-public/
 staging.duckdb*
 
 k8s/*-kubeconfig.yaml
+k8s/oca-etl-secret.yaml
