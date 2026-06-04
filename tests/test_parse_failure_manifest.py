@@ -11,7 +11,14 @@ from unittest.mock import patch
 
 from lib.duckdb_database import DuckDB
 from lib.etl_constants import DATA_FILENAME
-from lib.parse_manifest import build_parse_xml_step_details, upsert_parsed_etl_file
+from lib.parse_manifest import (
+    ParseFailFastError,
+    build_parse_xml_step_details,
+    cases_failed_from_details,
+    finalize_parse_xml_step,
+    upsert_parsed_etl_file,
+    upsert_promoted_etl_file,
+)
 from lib.parse_write_buffer import attach_write_buffer, flush_write_buffer
 from lib.parsers import (
     MAX_PARSE_ERROR_SAMPLES,
@@ -28,8 +35,11 @@ class FakeManifest:
     def __init__(self):
         self.file_upserts = []
         self.step_upserts = []
+        self.file_details_by_name = {}
 
     def upsert_file(self, file_name, source, status, stage=None, details=None, error=None):
+        if details is not None:
+            self.file_details_by_name[file_name] = dict(details)
         self.file_upserts.append({
             'file_name': file_name,
             'source': source,
@@ -204,6 +214,73 @@ class ParseManifestUpsertTests(unittest.TestCase):
         step_details = manifest.step_upserts[0]['details']
         self.assertEqual(step_details['total_cases_failed'], 1)
         self.assertEqual(step_details['files_with_failures'], 1)
+
+
+class PromoteCompletedGateTests(unittest.TestCase):
+    def test_upsert_promoted_marks_completed_only_when_no_failures(self):
+        manifest = FakeManifest()
+        clean_details = {
+            'extract_date': '2024-03-08',
+            'cases_seen': 10,
+            'cases_parsed_ok': 10,
+            'cases_failed': 0,
+            'error_samples': [],
+        }
+        dirty_details = dict(clean_details)
+        dirty_details['cases_failed'] = 3
+        dirty_details['cases_parsed_ok'] = 7
+        dirty_details['error_samples'] = ['err']
+
+        self.assertTrue(upsert_promoted_etl_file(manifest, 'clean.zip', 'sftp', clean_details))
+        self.assertFalse(upsert_promoted_etl_file(manifest, 'dirty.zip', 's3_private', dirty_details))
+
+        clean_upsert = manifest.file_upserts[-2]
+        dirty_upsert = manifest.file_upserts[-1]
+        self.assertEqual(clean_upsert['status'], 'completed')
+        self.assertEqual(clean_upsert['stage'], 'promote')
+        self.assertNotIn('parse_complete', clean_upsert['details'])
+
+        self.assertEqual(dirty_upsert['status'], 'parsed')
+        self.assertEqual(dirty_upsert['stage'], 'parse')
+        self.assertFalse(dirty_upsert['details']['parse_complete'])
+        self.assertEqual(dirty_upsert['details']['cases_failed'], 3)
+
+    def test_cases_failed_from_details_coerces_missing(self):
+        self.assertEqual(cases_failed_from_details({}), 0)
+        self.assertEqual(cases_failed_from_details({'cases_failed': '2'}), 2)
+
+
+class ParseFailFastTests(unittest.TestCase):
+    def test_finalize_parse_fail_fast_marks_step_and_files_failed(self):
+        manifest = FakeManifest()
+        manifest.file_details_by_name = {
+            'bad.zip': {
+                'cases_seen': 5,
+                'cases_parsed_ok': 3,
+                'cases_failed': 2,
+                'error_samples': ['err'],
+            },
+            'good.zip': {
+                'cases_seen': 1,
+                'cases_parsed_ok': 1,
+                'cases_failed': 0,
+                'error_samples': [],
+            },
+        }
+
+        with self.assertRaises(ParseFailFastError):
+            finalize_parse_xml_step(manifest, 2, 1, parse_fail_fast=True)
+
+        self.assertEqual(manifest.step_upserts[-1]['status'], 'failed')
+        self.assertEqual(manifest.step_upserts[-1]['step_name'], 'parse_xml')
+        failed_names = {u['file_name'] for u in manifest.file_upserts if u['status'] == 'failed'}
+        self.assertEqual(failed_names, {'bad.zip'})
+
+    def test_lenient_finalize_completes_step_with_failures(self):
+        manifest = FakeManifest()
+        finalize_parse_xml_step(manifest, 3, 1, parse_fail_fast=False)
+        self.assertEqual(manifest.step_upserts[-1]['status'], 'completed')
+        self.assertEqual(manifest.step_upserts[-1]['details']['total_cases_failed'], 3)
 
 
 if __name__ == '__main__':

@@ -37,8 +37,9 @@ from .etl_geocode import (
     upsert_geocoded_addresses,
 )
 from .parse_manifest import (
-    build_parse_xml_step_details,
+    finalize_parse_xml_step,
     upsert_parsed_etl_file,
+    upsert_promoted_etl_file,
 )
 from .parsers import oca_tag, parse_file
 
@@ -129,7 +130,7 @@ def download_selected_files(manifest, sftp, s3, priv_dir, s3_prefix, selection):
     manifest.upsert_step('download_files', 'completed')
 
 
-def parse_xml_to_staging(manifest, staging_db, priv_dir, parse_num_threads=8):
+def parse_xml_to_staging(manifest, staging_db, priv_dir, parse_num_threads=8, parse_fail_fast=False):
     def sort_by_date(file):
         r = re.search(r'(\d+.+)\.zip', file).group(0).replace('.', ' ')
         return r
@@ -165,10 +166,12 @@ def parse_xml_to_staging(manifest, staging_db, priv_dir, parse_num_threads=8):
         total_cases_failed += failed
         if failed > 0:
             files_with_failures += 1
-    manifest.upsert_step(
-        'parse_xml',
-        'completed',
-        details=build_parse_xml_step_details(total_cases_failed, files_with_failures),
+
+    finalize_parse_xml_step(
+        manifest,
+        total_cases_failed,
+        files_with_failures,
+        parse_fail_fast=parse_fail_fast,
     )
 
 
@@ -292,7 +295,8 @@ def import_and_promote_staging(manifest, db, pub_dir, s3_args, s3_prefix, select
     promote_staging_to_main(db)
     for selected_name in selection.selected_zip_files:
         source = 'sftp' if selected_name in selection.new_file_set else 's3_private'
-        manifest.upsert_file(selected_name, source=source, status='completed', stage='promote')
+        parse_details = manifest.file_details_by_name.get(selected_name, {})
+        upsert_promoted_etl_file(manifest, selected_name, source, parse_details)
     manifest.upsert_step('promote_staging', 'completed')
     return imported_staging_tables
 

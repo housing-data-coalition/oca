@@ -30,6 +30,7 @@ class RuntimeControlTests(unittest.TestCase):
         self.assertEqual(runtime_args['s3_prefix'], '')
         self.assertEqual(runtime_args['reprocess_glob'], '')
         self.assertFalse(runtime_args['force_reprocess'])
+        self.assertFalse(runtime_args['parse_fail_fast'])
 
     @patch('oca_update.oca_etl')
     def test_main_non_default_schema_smoke_path(self, oca_etl_mock):
@@ -47,6 +48,7 @@ class RuntimeControlTests(unittest.TestCase):
             'S3_PREFIX': 'refactor/dev',
             'REPROCESS_GLOB': 'LandlordTenant.Incr.2024-*.zip',
             'FORCE_REPROCESS': 'true',
+            'PARSE_FAIL_FAST': 'true',
             'GEOCODE_WORKERS': '3',
             'CENSUS_BATCH_CHUNK_SIZE': '2000',
             'CSV_ROW_CHECK_CHUNK_SIZE': '500',
@@ -60,6 +62,7 @@ class RuntimeControlTests(unittest.TestCase):
         self.assertEqual(runtime_args['reprocess_glob'], 'LandlordTenant.Incr.2024-*.zip')
         self.assertTrue(runtime_args['force_reprocess'])
         self.assertEqual(runtime_args['geocode_workers'], 3)
+        self.assertTrue(runtime_args['parse_fail_fast'])
 
     @patch('lib.database.psycopg2.connect')
     def test_database_sets_search_path_for_schema(self, connect_mock):
