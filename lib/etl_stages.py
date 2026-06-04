@@ -36,6 +36,10 @@ from .etl_geocode import (
     geocode_staging_addresses_csv,
     upsert_geocoded_addresses,
 )
+from .parse_manifest import (
+    build_parse_xml_step_details,
+    upsert_parsed_etl_file,
+)
 from .parsers import oca_tag, parse_file
 
 
@@ -138,6 +142,8 @@ def parse_xml_to_staging(manifest, staging_db, priv_dir, parse_num_threads=8):
     manifest.upsert_step('parse_xml', 'running')
     staging_db.execute_sql_file('lib/sql/create_tables_staging_duckdb.sql')
     print('Processing files:')
+    total_cases_failed = 0
+    files_with_failures = 0
     for zip_file in local_zip_files:
         file_name = os.path.basename(zip_file)
         manifest.upsert_file(file_name, source='local', status='processing', stage='parse')
@@ -148,17 +154,22 @@ def parse_xml_to_staging(manifest, staging_db, priv_dir, parse_num_threads=8):
                     extract_date = elem.text
                     break
         with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
-            parse_file(
+            parse_result = parse_file(
                 xml_file,
                 staging_db,
                 extract_date,
                 num_threads=parse_num_threads,
+                file_name=file_name,
             )
-        manifest.upsert_file(
-            file_name, source='local', status='parsed', stage='parse',
-            details={'extract_date': extract_date}
-        )
-    manifest.upsert_step('parse_xml', 'completed')
+        failed = upsert_parsed_etl_file(manifest, file_name, parse_result, extract_date)
+        total_cases_failed += failed
+        if failed > 0:
+            files_with_failures += 1
+    manifest.upsert_step(
+        'parse_xml',
+        'completed',
+        details=build_parse_xml_step_details(total_cases_failed, files_with_failures),
+    )
 
 
 def export_staging_to_csv(
