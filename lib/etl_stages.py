@@ -22,6 +22,8 @@ from .etl_helpers import (
 from .etl_promotion import (
     PURGE_TOMBSTONED_CASES_SQL_FILE,
     promote_staging_to_main,
+    promotion_counts_checksum,
+    promotion_table_counts,
 )
 from .etl_publish import (
     ADDRESS_VIEW_EXPORTS,
@@ -35,6 +37,11 @@ from .etl_geocode import (
     geocode_candidate_records,
     geocode_staging_addresses_csv,
     upsert_geocoded_addresses,
+)
+from .parse_manifest import (
+    finalize_parse_xml_step,
+    upsert_parsed_etl_file,
+    upsert_promoted_etl_file,
 )
 from .parsers import oca_tag, parse_file
 
@@ -125,7 +132,7 @@ def download_selected_files(manifest, sftp, s3, priv_dir, s3_prefix, selection):
     manifest.upsert_step('download_files', 'completed')
 
 
-def parse_xml_to_staging(manifest, staging_db, priv_dir, parse_num_threads=8):
+def parse_xml_to_staging(manifest, staging_db, priv_dir, parse_num_threads=8, parse_fail_fast=False):
     def sort_by_date(file):
         r = re.search(r'(\d+.+)\.zip', file).group(0).replace('.', ' ')
         return r
@@ -138,6 +145,8 @@ def parse_xml_to_staging(manifest, staging_db, priv_dir, parse_num_threads=8):
     manifest.upsert_step('parse_xml', 'running')
     staging_db.execute_sql_file('lib/sql/create_tables_staging_duckdb.sql')
     print('Processing files:')
+    total_cases_failed = 0
+    files_with_failures = 0
     for zip_file in local_zip_files:
         file_name = os.path.basename(zip_file)
         manifest.upsert_file(file_name, source='local', status='processing', stage='parse')
@@ -148,17 +157,24 @@ def parse_xml_to_staging(manifest, staging_db, priv_dir, parse_num_threads=8):
                     extract_date = elem.text
                     break
         with zipfile.ZipFile(zip_file, 'r').open(DATA_FILENAME) as xml_file:
-            parse_file(
+            parse_result = parse_file(
                 xml_file,
                 staging_db,
                 extract_date,
                 num_threads=parse_num_threads,
+                file_name=file_name,
             )
-        manifest.upsert_file(
-            file_name, source='local', status='parsed', stage='parse',
-            details={'extract_date': extract_date}
-        )
-    manifest.upsert_step('parse_xml', 'completed')
+        failed = upsert_parsed_etl_file(manifest, file_name, parse_result, extract_date)
+        total_cases_failed += failed
+        if failed > 0:
+            files_with_failures += 1
+
+    finalize_parse_xml_step(
+        manifest,
+        total_cases_failed,
+        files_with_failures,
+        parse_fail_fast=parse_fail_fast,
+    )
 
 
 def export_staging_to_csv(
@@ -277,12 +293,26 @@ def import_and_promote_staging(manifest, db, pub_dir, s3_args, s3_prefix, select
 
     db.execute_sql_file('normalize_staging_after_import.sql')
     db.execute_sql_file('update_appearance_outcomes.sql')
+    counts_before = promotion_table_counts(db)
+    checksum_before = promotion_counts_checksum(counts_before)
     print('\t...Promoting staging tables to main (single transaction)')
     promote_staging_to_main(db)
+    counts_after = promotion_table_counts(db)
+    checksum_after = promotion_counts_checksum(counts_after)
     for selected_name in selection.selected_zip_files:
         source = 'sftp' if selected_name in selection.new_file_set else 's3_private'
-        manifest.upsert_file(selected_name, source=source, status='completed', stage='promote')
-    manifest.upsert_step('promote_staging', 'completed')
+        parse_details = manifest.file_details_by_name.get(selected_name, {})
+        upsert_promoted_etl_file(manifest, selected_name, source, parse_details)
+    manifest.upsert_step(
+        'promote_staging',
+        'completed',
+        details={
+            'counts_before': counts_before,
+            'counts_after': counts_after,
+            'checksum_before': checksum_before,
+            'checksum_after': checksum_after,
+        },
+    )
     return imported_staging_tables
 
 

@@ -29,6 +29,7 @@ from .etl_promotion import (
     promotion_table_counts,
 )
 from .etl_run_manifest import EtlRunManifest, completed_reprocess_files, manifest_step
+from .parse_manifest import ParseFailFastError, file_names_needing_reprocess
 from .etl_stages import (
     FileSelection,
     download_selected_files,
@@ -83,6 +84,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args, runtime_args=None
     geocode_workers = runtime_args.get('geocode_workers') or multiprocessing.cpu_count()
     census_batch_chunk_size = runtime_args.get('census_batch_chunk_size') or 2500
     csv_row_check_chunk_size = runtime_args.get('csv_row_check_chunk_size') or 1000
+    parse_fail_fast = bool(runtime_args.get('parse_fail_fast'))
 
     db = Database(**db_args)
     manifest = EtlRunManifest(
@@ -114,7 +116,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args, runtime_args=None
             return True
 
         download_selected_files(manifest, sftp, s3, priv_dir, s3_prefix, selection)
-        parse_xml_to_staging(manifest, staging_db, priv_dir)
+        parse_xml_to_staging(manifest, staging_db, priv_dir, parse_fail_fast=parse_fail_fast)
         export_staging_csvs(
             manifest, staging_db, pub_dir,
             csv_preprocess_chunk_size=csv_row_check_chunk_size,
@@ -140,14 +142,17 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args, runtime_args=None
         normalize_public_s3_encryption(manifest, s3, published_keys)
         upload_private_source_files(manifest, s3, priv_dir, s3_prefix)
 
+        files_needing_reprocess = file_names_needing_reprocess(manifest.file_details_by_name)
+        processed_count = len(selection.selected_zip_files) - len(files_needing_reprocess)
         manifest.mark_run_completed(
             len(selection.selected_zip_files),
-            len(selection.selected_zip_files),
-            len(selection.skipped_reprocess_files)
+            processed_count,
+            len(selection.skipped_reprocess_files),
+            files_needing_reprocess=files_needing_reprocess or None,
         )
         return True
     except Exception as exc:
-        if selection and selection.selected_zip_files:
+        if selection and selection.selected_zip_files and not isinstance(exc, ParseFailFastError):
             for selected_name in selection.selected_zip_files:
                 source = 'sftp' if selected_name in selection.new_file_set else 's3_private'
                 manifest.upsert_file(selected_name, source=source, status='failed', stage='run', error=exc)

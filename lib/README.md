@@ -35,7 +35,7 @@ Each weekly run is orchestrated sequentially in `oca_etl()`. There is **no** pos
 |-------|--------|--------------|
 | Select files | `etl_file_selection.py`, `etl_stages.select_input_files` | Picks new SFTP zips and/or S3 private replays (`REPROCESS_GLOB`); skips manifest-completed files unless `FORCE_REPROCESS=true`. |
 | Download | `etl_stages.download_selected_files` | New files from SFTP; replay files from S3 private backup. |
-| Parse | `parsers.py`, `duckdb_database.py` | Streaming XML parse into local DuckDB (`staging.duckdb`); batched writes via `parse_write_buffer.py`. Address rows have no lat/lon until CSV geocode. |
+| Parse | `parsers.py`, `duckdb_database.py`, `parse_manifest.py` | Streaming XML parse into local DuckDB (`staging.duckdb`); batched writes via `parse_write_buffer.py` with per-case windows (`begin_case` / `discard_case` on error—no partial case rows). Per-zip `cases_seen` / `cases_parsed_ok` / `cases_failed` (+ capped `error_samples`) on `etl_files.details`. Default lenient: promote/publish still run; `etl_files.status = 'completed'` only when **`cases_failed = 0`** after promote. `PARSE_FAIL_FAST` aborts before export/promote. Address rows have no lat/lon until CSV geocode. |
 | Export staging | `etl_stages.export_staging_csvs` | DuckDB `COPY` with Postgres-compatible transforms; manifest step `export_staging`. No S3 upload yet. |
 | Geocode staging | `etl_geocode.geocode_staging_addresses_csv`, `etl_stages.geocode_staging_csvs` | Geocode **every** row in `oca_addresses_staging.csv`; write `oca_addresses_staging_geocoded.csv`, copy over staging CSV; manifest step `geocode_staging`. |
 | Upload staging | `etl_stages.upload_staging_csvs`, `etl_publish.list_staging_csvs_in_dir` | Upload only whitelisted `{table}_staging.csv` files (from `OCA_TABLES`); ignores geocoder temps and other junk; manifest step `upload_staging`. |
@@ -104,7 +104,7 @@ Legacy/manual only: `reset_addresses_table.sql`, `update_metadata.sql`.
 
 - **Manifest** — weekly runs record `export_staging`, `geocode_staging`, `upload_staging`, `promote_staging`, `publish_public`, `normalize_s3_encryption`, `upload_private`. Backfill runs record only `geocode_refresh`.
 - **Connection resilience** — TCP keepalives and `ensure_connection()` before promote and before publish.
-- **Reprocess** — `REPROCESS_GLOB` selects S3 private backups; manifest skips completed files unless `FORCE_REPROCESS=true`.
+- **Reprocess** — `REPROCESS_GLOB` selects S3 private backups; manifest skips files in `completed_reprocess_files` (promoted with `cases_failed = 0`) unless `FORCE_REPROCESS=true`. Zips with prior case-level parse failures stay eligible for reprocess without force.
 - **Schema isolation** — `DB_SCHEMA` + `S3_PREFIX` for refactor/E2E without touching production paths.
 - **Weekly geocode** — all staging CSV address rows (re-geocodes rows that already have lat/lon in the file).
 - **Backfill geocode** — only `lat IS NULL` with a house number; upsert matches on address line columns, not `indexnumberid` alone.

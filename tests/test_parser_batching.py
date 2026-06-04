@@ -121,6 +121,24 @@ class ParserBatchingSemanticsTests(unittest.TestCase):
 
 
 class ParseWriteBufferTests(unittest.TestCase):
+    def test_discard_case_drops_in_window_writes(self):
+        from lib.parse_write_buffer import StagingWriteBuffer
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = DuckDB(os.path.join(tmp, 'buf.duckdb'))
+            db.execute('CREATE TABLE t (id INTEGER, v VARCHAR)')
+            buffer = StagingWriteBuffer(
+                db,
+                ParseWriteConfig(enabled=True, batch_size=100, flush_every_n_cases=10),
+            )
+            buffer.begin_case()
+            buffer.queue_insert('INSERT INTO t VALUES (?, ?)', (1, 'orphan'))
+            buffer.discard_case()
+            buffer.flush()
+            count = db.execute('SELECT COUNT(*) FROM t').fetchone()[0]
+            db.close()
+        self.assertEqual(count, 0)
+
     def test_flush_order_deletes_before_inserts(self):
         from lib.parse_write_buffer import StagingWriteBuffer
 

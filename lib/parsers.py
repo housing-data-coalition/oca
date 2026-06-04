@@ -1,6 +1,7 @@
 import logging
 import queue
 import threading
+from dataclasses import dataclass, field
 
 from lxml import etree
 
@@ -9,6 +10,41 @@ from .parse_write_buffer import attach_write_buffer, flush_write_buffer, staging
 logger = logging.getLogger(__name__)
 
 PARSE_PROGRESS_INTERVAL = 1000
+MAX_PARSE_ERROR_SAMPLES = 10
+MAX_PARSE_ERROR_SAMPLE_LEN = 500
+
+
+@dataclass
+class ParseFileResult:
+    """Per-zip parse health counters (thread-safe)."""
+
+    cases_seen: int = 0
+    cases_parsed_ok: int = 0
+    cases_failed: int = 0
+    error_samples: list[str] = field(default_factory=list)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    def record_seen(self) -> None:
+        with self._lock:
+            self.cases_seen += 1
+
+    def record_ok(self) -> None:
+        with self._lock:
+            self.cases_parsed_ok += 1
+
+    def record_failed(self, error: str) -> None:
+        sample = _truncate_parse_error(str(error))
+        with self._lock:
+            self.cases_failed += 1
+            if len(self.error_samples) < MAX_PARSE_ERROR_SAMPLES:
+                self.error_samples.append(sample)
+
+
+def _truncate_parse_error(message: str) -> str:
+    if len(message) <= MAX_PARSE_ERROR_SAMPLE_LEN:
+        return message
+    return message[: MAX_PARSE_ERROR_SAMPLE_LEN - 3] + '...'
+
 
 NAMESPACE = '{http://www.example.org/LandlordTenantExtractSchema}'
 
@@ -22,6 +58,11 @@ def oca_tag(tag):
 
 INDEX_NUMBER_ID_TAG = oca_tag('IndexNumberId')
 DELETE_TAG = oca_tag('Delete')
+
+
+def _index_number_id_from_case(case) -> str | None:
+    elem = case.find(INDEX_NUMBER_ID_TAG)
+    return None if elem is None else elem.text
 
 
 def is_case_to_delete(case):
@@ -513,14 +554,16 @@ def parse_case(case, db, extract_date):
     :param db: a DuckDB object
     :param extract_date: date of extract
     """
-    
+    buffer = getattr(db, 'write_buffer', None)
+    if buffer is not None:
+        buffer.begin_case()
+
     update_metadata(case, db, extract_date)
 
     # If this case is flagged for removal, skip the parsing steps
     if is_case_to_delete(case):
-        buffer = getattr(db, 'write_buffer', None)
         if buffer is not None:
-            buffer.on_case_complete()
+            buffer.commit_case()
         return
 
     parse_index(case, db)
@@ -534,12 +577,11 @@ def parse_case(case, db, extract_date):
     parse_judgments(case, db)
     parse_warrants(case, db)
 
-    buffer = getattr(db, 'write_buffer', None)
     if buffer is not None:
-        buffer.on_case_complete()
+        buffer.commit_case()
 
 
-def _worker_thread(case_queue, db_queue, extract_date, thread_id):
+def _worker_thread(case_queue, db_queue, extract_date, thread_id, stats: ParseFileResult):
     """Worker thread that processes cases from the queue"""
     while True:
         try:
@@ -551,9 +593,28 @@ def _worker_thread(case_queue, db_queue, extract_date, thread_id):
             thread_db = db_queue.get()
             try:
                 parse_case(case, thread_db, extract_date)
+                stats.record_ok()
             except Exception as e:
-                print(f"Thread {thread_id}: Error parsing case: {e}")
-                flush_write_buffer(thread_db, reason='parse_error')
+                index_id = _index_number_id_from_case(case)
+                if index_id:
+                    logger.warning(
+                        "Parse case failed thread=%s indexnumberid=%s: %s",
+                        thread_id,
+                        index_id,
+                        e,
+                        exc_info=True,
+                    )
+                else:
+                    logger.warning(
+                        "Parse case failed thread=%s: %s",
+                        thread_id,
+                        e,
+                        exc_info=True,
+                    )
+                buffer = getattr(thread_db, 'write_buffer', None)
+                if buffer is not None:
+                    buffer.discard_case()
+                stats.record_failed(str(e))
             finally:
                 # Clear the case copy from memory
                 case.clear()
@@ -565,7 +626,7 @@ def _worker_thread(case_queue, db_queue, extract_date, thread_id):
             case_queue.task_done()
 
 
-def parse_file(xml_file, staging_db, extract_date, num_threads=8):
+def parse_file(xml_file, staging_db, extract_date, num_threads=8, file_name=None):
     """
     Parse XML file with multiple threads
 
@@ -573,9 +634,12 @@ def parse_file(xml_file, staging_db, extract_date, num_threads=8):
     :param staging_db: DuckDB database object
     :param extract_date: date of extract
     :param num_threads: number of worker threads (increasing this doesn't speed up much, bottleneck is the database writes)
+    :param file_name: basename for summary logging (optional)
+    :return: ParseFileResult with per-zip counters
     """
     from .duckdb_database import DuckDB
 
+    stats = ParseFileResult()
     case_queue = queue.Queue(maxsize=num_threads * 10)
     db_queue = queue.Queue()
 
@@ -588,8 +652,8 @@ def parse_file(xml_file, staging_db, extract_date, num_threads=8):
     threads = []
     for i in range(num_threads):
         t = threading.Thread(
-            target=_worker_thread, 
-            args=(case_queue, db_queue, extract_date, i)
+            target=_worker_thread,
+            args=(case_queue, db_queue, extract_date, i, stats),
         )
         t.start()
         threads.append(t)
@@ -597,14 +661,12 @@ def parse_file(xml_file, staging_db, extract_date, num_threads=8):
     # Parse XML and feed cases to queue
     context = etree.iterparse(xml_file, tag=oca_tag('Index'))
     
-    
-    total_cases = 0
     for _, case in context:
         case_copy = etree.fromstring(etree.tostring(case))
         case_queue.put(case_copy)
-        total_cases += 1
-        if total_cases % PARSE_PROGRESS_INTERVAL == 0:
-            logger.info("Parsed %s cases", total_cases)
+        stats.record_seen()
+        if stats.cases_seen % PARSE_PROGRESS_INTERVAL == 0:
+            logger.info("Parsed %s cases", stats.cases_seen)
 
         # Clear the case element to free memory
         case.clear()
@@ -624,6 +686,14 @@ def parse_file(xml_file, staging_db, extract_date, num_threads=8):
         thread_db = db_queue.get()
         flush_write_buffer(thread_db)
         thread_db.close()
-    
-    logger.info("Processed %s cases with %s threads", total_cases, num_threads)
+
+    label = file_name or getattr(xml_file, 'name', None) or 'unknown'
+    logger.info(
+        "Parse zip summary file=%s seen=%d ok=%d failed=%d",
+        label,
+        stats.cases_seen,
+        stats.cases_parsed_ok,
+        stats.cases_failed,
+    )
+    return stats
 

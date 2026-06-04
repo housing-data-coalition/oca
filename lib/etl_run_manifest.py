@@ -23,6 +23,7 @@ class EtlRunManifest:
         self.reprocess_glob = reprocess_glob or ''
         self.force_reprocess = force_reprocess
         self.run_id = str(uuid.uuid4())
+        self.file_details_by_name = {}
 
     def setup_tables(self):
         self.db.execute_sql_file('create_etl_manifest_tables.sql')
@@ -45,7 +46,21 @@ class EtlRunManifest:
             )
         """)
 
-    def mark_run_completed(self, selected_count, processed_count, skipped_count):
+    def mark_run_completed(
+        self,
+        selected_count,
+        processed_count,
+        skipped_count,
+        files_needing_reprocess=None,
+    ):
+        metadata_patch = {}
+        if files_needing_reprocess:
+            metadata_patch['files_needing_reprocess'] = list(files_needing_reprocess)
+        metadata_sql = (
+            f", metadata = metadata || {self._json_literal(metadata_patch)}"
+            if metadata_patch
+            else ""
+        )
         self.db.sql(f"""
             UPDATE etl_runs
             SET status = 'completed',
@@ -53,6 +68,7 @@ class EtlRunManifest:
                 selected_file_count = {selected_count},
                 processed_file_count = {processed_count},
                 skipped_file_count = {skipped_count}
+                {metadata_sql}
             WHERE run_id = {self._literal(self.run_id)}
         """)
 
@@ -69,6 +85,8 @@ class EtlRunManifest:
         """)
 
     def upsert_file(self, file_name, source, status, stage=None, details=None, error=None):
+        if details is not None:
+            self.file_details_by_name[file_name] = dict(details)
         stage_value = "NULL" if stage is None else self._literal(stage)
         details_value = self._json_literal(details or {})
         error_message = "NULL" if error is None else self._literal(str(error))
@@ -139,6 +157,7 @@ def completed_reprocess_files(db, reprocess_files):
         JOIN etl_runs er ON er.run_id = ef.run_id
         WHERE ef.status = 'completed'
           AND er.status = 'completed'
+          AND COALESCE((ef.details->>'cases_failed')::int, 0) = 0
           AND ef.file_name IN ({quoted_files})
     """)
     return {row[0] for row in rows}
