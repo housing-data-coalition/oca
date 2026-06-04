@@ -22,6 +22,8 @@ from .etl_helpers import (
 from .etl_promotion import (
     PURGE_TOMBSTONED_CASES_SQL_FILE,
     promote_staging_to_main,
+    promotion_counts_checksum,
+    promotion_table_counts,
 )
 from .etl_publish import (
     ADDRESS_VIEW_EXPORTS,
@@ -291,13 +293,26 @@ def import_and_promote_staging(manifest, db, pub_dir, s3_args, s3_prefix, select
 
     db.execute_sql_file('normalize_staging_after_import.sql')
     db.execute_sql_file('update_appearance_outcomes.sql')
+    counts_before = promotion_table_counts(db)
+    checksum_before = promotion_counts_checksum(counts_before)
     print('\t...Promoting staging tables to main (single transaction)')
     promote_staging_to_main(db)
+    counts_after = promotion_table_counts(db)
+    checksum_after = promotion_counts_checksum(counts_after)
     for selected_name in selection.selected_zip_files:
         source = 'sftp' if selected_name in selection.new_file_set else 's3_private'
         parse_details = manifest.file_details_by_name.get(selected_name, {})
         upsert_promoted_etl_file(manifest, selected_name, source, parse_details)
-    manifest.upsert_step('promote_staging', 'completed')
+    manifest.upsert_step(
+        'promote_staging',
+        'completed',
+        details={
+            'counts_before': counts_before,
+            'counts_after': counts_after,
+            'checksum_before': checksum_before,
+            'checksum_after': checksum_after,
+        },
+    )
     return imported_staging_tables
 
 

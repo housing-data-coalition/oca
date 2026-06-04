@@ -199,3 +199,81 @@ class PromotionTableCountsTests(unittest.TestCase):
         counts = promotion_table_counts(db, tables=['oca_index', 'oca_causes'])
         self.assertEqual(counts, {'oca_index': 42, 'oca_causes': 42})
         self.assertEqual(db.sql_fetch_one.call_count, 2)
+
+
+class FakeManifest:
+    def __init__(self):
+        self.step_upserts = []
+        self.file_details_by_name = {}
+
+    def upsert_file(self, file_name, source, status, stage=None, details=None, error=None):
+        if details is not None:
+            self.file_details_by_name[file_name] = dict(details)
+
+    def upsert_step(self, step_name, status, details=None, error=None):
+        self.step_upserts.append({
+            'step_name': step_name,
+            'status': status,
+            'details': details or {},
+            'error': error,
+        })
+
+
+class ImportAndPromoteStagingObservabilityTests(unittest.TestCase):
+    @mock.patch('lib.etl_stages.upsert_promoted_etl_file')
+    @mock.patch('lib.etl_stages.promote_staging_to_main')
+    @mock.patch('lib.etl_stages.ensure_core_tables_exist')
+    @mock.patch('lib.etl_stages.staging_tables_with_rows', return_value=[])
+    @mock.patch('lib.etl_stages.promotion_table_counts')
+    @mock.patch('geosupport.Geosupport')
+    def test_promote_step_records_before_after_checksums(
+        self,
+        _geosupport_mock,
+        counts_mock,
+        _staging_rows_mock,
+        _ensure_tables_mock,
+        _promote_mock,
+        _upsert_file_mock,
+    ):
+        from lib.etl_stages import FileSelection, import_and_promote_staging
+
+        counts_before = {'oca_index': 100, 'oca_metadata': 100}
+        counts_after = {'oca_index': 150, 'oca_metadata': 150}
+        counts_mock.side_effect = [counts_before, counts_after]
+
+        manifest = FakeManifest()
+        db = mock.Mock()
+        selection = FileSelection(
+            selected_zip_files=['test.zip'],
+            skipped_reprocess_files=[],
+            new_file_set={'test.zip'},
+            reprocess_file_set=set(),
+            sftp_download_files=['test.zip'],
+            s3_download_files=[],
+        )
+
+        with mock.patch('lib.etl_stages.csv_has_rows', return_value=False):
+            import_and_promote_staging(
+                manifest,
+                db,
+                '/tmp/pub',
+                {'aws_bucket_name': 'b', 'aws_id': 'i', 'aws_key': 'k'},
+                '',
+                selection,
+                'public',
+            )
+
+        completed = [s for s in manifest.step_upserts if s['status'] == 'completed'][-1]
+        self.assertEqual(completed['step_name'], 'promote_staging')
+        details = completed['details']
+        self.assertEqual(details['counts_before'], counts_before)
+        self.assertEqual(details['counts_after'], counts_after)
+        self.assertEqual(
+            details['checksum_before'],
+            promotion_counts_checksum(counts_before),
+        )
+        self.assertEqual(
+            details['checksum_after'],
+            promotion_counts_checksum(counts_after),
+        )
+        self.assertEqual(counts_mock.call_count, 2)
