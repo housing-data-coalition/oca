@@ -5,6 +5,7 @@ from .etl_constants import OCA_TABLES
 
 PROMOTION_SQL_FILE = 'promote_staging_to_main.sql'
 PROMOTION_INDEX_SQL_FILE = 'ensure_promotion_indexes.sql'
+PURGE_TOMBSTONED_CASES_SQL_FILE = 'purge_tombstoned_cases.sql'
 
 # Tables promoted via promote_staging_to_main.sql (oca_metadata merged in-SQL).
 PROMOTED_TABLES = [t for t in OCA_TABLES if t != 'oca_metadata']

@@ -19,7 +19,10 @@ from .etl_helpers import (
     s3_key,
     upload_public_file,
 )
-from .etl_promotion import promote_staging_to_main
+from .etl_promotion import (
+    PURGE_TOMBSTONED_CASES_SQL_FILE,
+    promote_staging_to_main,
+)
 from .etl_publish import (
     ADDRESS_VIEW_EXPORTS,
     export_table_to_s3,
@@ -299,6 +302,34 @@ def publish_core_tables(db, s3_args, s3_prefix):
             export_table_to_s3(db, t, s3_filename, s3_args, s3_prefix)
         )
     return published_keys
+
+
+def count_tombstone_orphans(db):
+    """Cases with oca_metadata.deletedate still present in oca_index."""
+    row = db.sql_fetch_one("""
+        SELECT COUNT(*)::bigint
+        FROM oca_index i
+        INNER JOIN oca_metadata m ON m.indexnumberid = i.indexnumberid
+        WHERE m.deletedate IS NOT NULL
+    """)
+    return int(row[0]) if row else 0
+
+
+def purge_tombstoned_cases(manifest, db):
+    """Delete oca_index rows (and children via CASCADE) for metadata tombstones."""
+    manifest.upsert_step('deletion_backfill', 'running')
+    orphan_count_before = count_tombstone_orphans(db)
+    db.execute_sql_file(PURGE_TOMBSTONED_CASES_SQL_FILE)
+    orphan_count_after = count_tombstone_orphans(db)
+    manifest.upsert_step(
+        'deletion_backfill',
+        'completed',
+        details={
+            'orphan_count_before': orphan_count_before,
+            'orphan_count_after': orphan_count_after,
+        },
+    )
+    return orphan_count_before, orphan_count_after
 
 
 def geocode_addresses(manifest, db, pub_dir, geocode_workers, census_batch_chunk_size):
