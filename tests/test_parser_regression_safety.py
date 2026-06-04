@@ -9,10 +9,11 @@ import unittest
 import zipfile
 from unittest.mock import patch
 
-from lib.duckdb_database import DuckDB, fetch_staging_row_counts
+from lib.duckdb_database import STAGING_TABLE_FAMILIES, DuckDB, fetch_staging_row_counts
 from lib.etl_constants import DATA_FILENAME
 from lib.etl_stages import export_staging_to_csv
 from lib.parse_write_buffer import ParseWriteConfig, StagingWriteBuffer, attach_write_buffer, flush_write_buffer
+from lib import parsers
 from lib.parsers import parse_case, parse_file
 
 from csv_checksums import md5_dir_csvs
@@ -25,6 +26,20 @@ def _init_staging_db(path: str) -> DuckDB:
     db.execute_sql_file('lib/sql/create_tables_staging_duckdb.sql')
     attach_write_buffer(db)
     return db
+
+
+def _staging_counts_for_index(db: DuckDB, index_id: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for table_name in STAGING_TABLE_FAMILIES:
+        try:
+            row = db.execute(
+                f'SELECT COUNT(*) FROM {table_name} WHERE indexnumberid = ?',
+                (index_id,),
+            ).fetchone()
+            counts[table_name] = int(row[0]) if row else 0
+        except Exception:
+            counts[table_name] = 0
+    return counts
 
 
 def _parse_zip_bytes(
@@ -125,7 +140,7 @@ class ColdRerunIdempotencyTests(unittest.TestCase):
 
 
 class ParserFailureRerunTests(unittest.TestCase):
-    def test_mid_file_failure_flush_then_rerun_matches_clean_parse(self):
+    def test_mid_file_failure_discard_then_rerun_matches_clean_parse(self):
         xml_bytes = build_extract_xml(20, child_profile='weekly')
         fail_on_case = 8
         seen = {'n': 0}
@@ -159,6 +174,34 @@ class ParserFailureRerunTests(unittest.TestCase):
                 dirty_db.close()
 
         self.assertEqual(clean_counts, recovery_counts)
+
+    def test_failed_mid_case_leaves_no_staging_footprint(self):
+        """Failure after metadata + partial children leaves no rows for that case."""
+        xml_bytes = build_extract_xml(12, child_profile='weekly')
+        fail_id = 'LT-BENCH-000005'
+        real_parse_index = parsers.parse_index
+
+        def parse_index_maybe_fail(case, db):
+            real_parse_index(case, db)
+            index_el = case.find(parsers.INDEX_NUMBER_ID_TAG)
+            if index_el is not None and index_el.text == fail_id:
+                raise RuntimeError('injected after metadata and index')
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = _init_staging_db(os.path.join(tmp, 'dirty.duckdb'))
+            try:
+                baseline = _staging_counts_for_index(db, fail_id)
+                with patch('lib.parsers.parse_index', parse_index_maybe_fail):
+                    _parse_zip_bytes(xml_bytes, db)
+                flush_write_buffer(db)
+                after_failure = _staging_counts_for_index(db, fail_id)
+                counts = fetch_staging_row_counts(db)
+            finally:
+                db.close()
+
+        self.assertEqual(baseline, {table: 0 for table in STAGING_TABLE_FAMILIES})
+        self.assertEqual(after_failure, baseline)
+        self.assertEqual(counts['oca_index_staging'], 11)
 
 
 class BatchBoundaryCorrectnessTests(unittest.TestCase):

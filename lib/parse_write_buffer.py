@@ -61,6 +61,8 @@ class StagingWriteBuffer:
         self._inserts: dict[str, list[tuple | None]] = {}
         self._cases_in_window = 0
         self._flush_count = 0
+        self._in_case_window = False
+        self._case_mark: tuple[int, dict[str, int]] | None = None
 
     def _pending_insert_count(self) -> int:
         return sum(len(rows) for rows in self._inserts.values())
@@ -70,8 +72,46 @@ class StagingWriteBuffer:
 
     def queue_insert(self, sql: str, params: tuple | None) -> None:
         self._inserts.setdefault(sql, []).append(params)
-        if self._pending_insert_count() >= self.config.batch_size:
+        if (
+            not self._in_case_window
+            and self._pending_insert_count() >= self.config.batch_size
+        ):
             self.flush(reason='batch_size')
+
+    def begin_case(self) -> None:
+        """Start a whole-case write window (metadata + children)."""
+        self._case_mark = (
+            len(self._deletes),
+            {sql: len(rows) for sql, rows in self._inserts.items()},
+        )
+        self._in_case_window = True
+
+    def discard_case(self) -> None:
+        """Drop queued writes for the current case without executing them."""
+        if not self._in_case_window:
+            return
+        mark = self._case_mark
+        if mark is not None:
+            del_len, insert_lens = mark
+            del self._deletes[del_len:]
+            for sql in list(self._inserts):
+                prev = insert_lens.get(sql, 0)
+                rows = self._inserts[sql]
+                if prev >= len(rows):
+                    del self._inserts[sql]
+                else:
+                    del rows[prev:]
+                    if not rows:
+                        del self._inserts[sql]
+        self._case_mark = None
+        self._in_case_window = False
+
+    def commit_case(self) -> None:
+        """End a successful case window and apply cross-case cadence flush."""
+        if self._in_case_window:
+            self._case_mark = None
+            self._in_case_window = False
+        self.on_case_complete()
 
     def on_case_complete(self) -> None:
         self._cases_in_window += 1

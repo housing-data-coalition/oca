@@ -554,14 +554,16 @@ def parse_case(case, db, extract_date):
     :param db: a DuckDB object
     :param extract_date: date of extract
     """
-    
+    buffer = getattr(db, 'write_buffer', None)
+    if buffer is not None:
+        buffer.begin_case()
+
     update_metadata(case, db, extract_date)
 
     # If this case is flagged for removal, skip the parsing steps
     if is_case_to_delete(case):
-        buffer = getattr(db, 'write_buffer', None)
         if buffer is not None:
-            buffer.on_case_complete()
+            buffer.commit_case()
         return
 
     parse_index(case, db)
@@ -575,9 +577,8 @@ def parse_case(case, db, extract_date):
     parse_judgments(case, db)
     parse_warrants(case, db)
 
-    buffer = getattr(db, 'write_buffer', None)
     if buffer is not None:
-        buffer.on_case_complete()
+        buffer.commit_case()
 
 
 def _worker_thread(case_queue, db_queue, extract_date, thread_id, stats: ParseFileResult):
@@ -610,7 +611,9 @@ def _worker_thread(case_queue, db_queue, extract_date, thread_id, stats: ParseFi
                         e,
                         exc_info=True,
                     )
-                flush_write_buffer(thread_db, reason='parse_error')
+                buffer = getattr(thread_db, 'write_buffer', None)
+                if buffer is not None:
+                    buffer.discard_case()
                 stats.record_failed(str(e))
             finally:
                 # Clear the case copy from memory
