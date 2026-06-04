@@ -6,6 +6,8 @@ services:
     user: 'root'
     volumes:
       - .:/app
+      # Keep Linux .venv out of the host bind mount (macOS .venv breaks imports in-container).
+      - app_venv:/app/.venv
     environment:
       DATABASE_URL: ${DATABASE_URL}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
@@ -23,3 +25,6 @@ services:
     # ports:
     #   - 8888:8888
     tty: true
+
+volumes:
+  app_venv:
