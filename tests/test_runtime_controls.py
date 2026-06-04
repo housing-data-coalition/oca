@@ -31,6 +31,7 @@ class RuntimeControlTests(unittest.TestCase):
         self.assertEqual(runtime_args['reprocess_glob'], '')
         self.assertFalse(runtime_args['force_reprocess'])
         self.assertFalse(runtime_args['parse_fail_fast'])
+        self.assertFalse(runtime_args['skip_public_publish'])
 
     @patch('oca_update.oca_etl')
     def test_main_non_default_schema_smoke_path(self, oca_etl_mock):
@@ -63,6 +64,25 @@ class RuntimeControlTests(unittest.TestCase):
         self.assertTrue(runtime_args['force_reprocess'])
         self.assertEqual(runtime_args['geocode_workers'], 3)
         self.assertTrue(runtime_args['parse_fail_fast'])
+
+    @patch('oca_update.oca_etl')
+    def test_main_passes_skip_public_publish_from_env(self, oca_etl_mock):
+        with patch.dict(os.environ, {
+            'DATABASE_URL': 'postgres://example',
+            'AWS_ACCESS_KEY_ID': 'id',
+            'AWS_SECRET_ACCESS_KEY': 'key',
+            'AWS_S3_BUCKET_NAME': 'bucket',
+            'SFTP_HOST': 'host',
+            'SFTP_USER': 'user',
+            'SFTP_PSWD': 'pswd',
+            'SFTP_DIR': '/incoming',
+            'MODE': '2',
+            'SKIP_PUBLIC_PUBLISH': 'true',
+        }, clear=True), patch('sys.argv', ['oca_update.py']):
+            oca_update.main()
+
+        runtime_args = oca_etl_mock.call_args[0][5]
+        self.assertTrue(runtime_args['skip_public_publish'])
 
     @patch('lib.database.psycopg2.connect')
     def test_database_sets_search_path_for_schema(self, connect_mock):

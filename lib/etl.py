@@ -85,6 +85,7 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args, runtime_args=None
     census_batch_chunk_size = runtime_args.get('census_batch_chunk_size') or 2500
     csv_row_check_chunk_size = runtime_args.get('csv_row_check_chunk_size') or 1000
     parse_fail_fast = bool(runtime_args.get('parse_fail_fast'))
+    skip_public_publish = bool(runtime_args.get('skip_public_publish'))
 
     db = Database(**db_args)
     manifest = EtlRunManifest(
@@ -135,11 +136,17 @@ def oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args, runtime_args=None
             selection,
             runtime_args.get('db_schema') or db_args.get('schema') or 'public',
         )
-        db.ensure_connection()
-        published_keys = publish_public_artifacts(
-            manifest, db, s3_args, s3_prefix, mode, selection, pub_dir,
-        )
-        normalize_public_s3_encryption(manifest, s3, published_keys)
+        if skip_public_publish:
+            print('Skipping public publish (SKIP_PUBLIC_PUBLISH)')
+            skip_details = {'skipped': True, 'reason': 'SKIP_PUBLIC_PUBLISH'}
+            manifest.upsert_step('publish_public', 'completed', details=skip_details)
+            manifest.upsert_step('normalize_s3_encryption', 'completed', details=skip_details)
+        else:
+            db.ensure_connection()
+            published_keys = publish_public_artifacts(
+                manifest, db, s3_args, s3_prefix, mode, selection, pub_dir,
+            )
+            normalize_public_s3_encryption(manifest, s3, published_keys)
         upload_private_source_files(manifest, s3, priv_dir, s3_prefix)
 
         files_needing_reprocess = file_names_needing_reprocess(manifest.file_details_by_name)
