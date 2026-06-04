@@ -8,6 +8,8 @@ python oca_update.py
 
 Historical RDS rows that still lack coordinates are handled separately by `oca_geocode_backfill.py` (not scheduled with weekly ETL). See [RDS geocode backfill](#rds-geocode-backfill-on-demand) below.
 
+Cases marked deleted in OCA XML are tombstoned in `oca_metadata.deletedate` and purged from `oca_index` (and child tables) during weekly promotion. Historical orphans (tombstone without purge) are cleaned by `oca_deletion_backfill.py` — see [RDS deletion backfill](#rds-deletion-backfill-on-demand).
+
 Use Docker (or the published image `justfixnyc/oca:latest`) with credentials supplied via environment variables or a secret store. See [Runtime controls](#runtime-controls) and the root [README](../../README.md).
 
 ## Runtime controls
@@ -51,6 +53,28 @@ Same secrets as weekly ETL (`DATABASE_URL`, `DB_SCHEMA`, AWS if needed for manif
 - Selects only ungeocoded rows (`select_addresses_needing_geocode.sql`).
 - Records manifest `mode='geocode_backfill'` with step `geocode_refresh` only.
 - **Does not** run `create_addresses_views.sql` or publish public CSVs. Re-run publish (or a full `oca_update.py` publish path) if S3 must reflect backfilled coordinates.
+
+## RDS deletion backfill (on-demand)
+
+Use after deploying tombstone-aware promotion, or when validation shows case rows still present for deleted metadata. **Not** wired into weekly ETL.
+
+```bash
+docker compose run --rm app python oca_deletion_backfill.py
+```
+
+Same secrets as weekly ETL (`DATABASE_URL`, `DB_SCHEMA`). Records manifest `mode='deletion_backfill'` with step `deletion_backfill`.
+
+- Deletes from `oca_index` only (child tables CASCADE); **`oca_metadata` rows are kept** (`deletedate` preserved).
+- **Does not** publish public CSVs. Re-run weekly publish if S3 must drop deleted cases from snapshots.
+
+**Validation** (expect `0` after a successful backfill):
+
+```sql
+SELECT COUNT(*)::bigint
+FROM oca_index i
+INNER JOIN oca_metadata m ON m.indexnumberid = i.indexnumberid
+WHERE m.deletedate IS NOT NULL;
+```
 
 ## 1. Local Docker + cron (weekly)
 

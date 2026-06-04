@@ -7,6 +7,7 @@ from lib.etl_constants import OCA_TABLES
 from lib.etl_promotion import (
     ADDRESS_NATURAL_KEY_COLUMNS,
     PROMOTION_SQL_FILE,
+    PURGE_TOMBSTONED_CASES_SQL_FILE,
     promote_staging_to_main,
     promotion_counts_checksum,
     promotion_table_counts,
@@ -114,9 +115,27 @@ class PromoteStagingSqlContractTests(unittest.TestCase):
         self.assertIn('SET session_replication_role = replica', self.sql)
         self.assertIn('SET session_replication_role = default', self.sql)
 
-    def test_oca_index_upsert_not_delete(self):
+    def test_oca_index_upsert_with_tombstone_purge(self):
         self.assertIn('ON CONFLICT (indexnumberid) DO UPDATE', self.sql)
-        self.assertNotRegex(self.sql, r'DELETE FROM oca_index\b')
+        self.assertRegex(self.sql, r'DELETE FROM oca_index\b')
+        self.assertGreaterEqual(self.sql.count('DELETE FROM oca_index'), 2)
+
+    def test_tombstone_temp_tables_and_filtered_staging(self):
+        self.assertIn('CREATE TEMP TABLE tombstoned_ids', self.sql)
+        self.assertIn('CREATE TEMP TABLE promotion_active_staging_ids', self.sql)
+        self.assertIn('oca_metadata_staging WHERE deletedate IS NOT NULL', self.sql)
+        self.assertIn(
+            'FROM oca_index_staging\nWHERE indexnumberid IN '
+            '(SELECT indexnumberid FROM promotion_active_staging_ids)',
+            self.sql,
+        )
+
+    def test_child_inserts_exclude_tombstones(self):
+        self.assertIn(
+            'FROM oca_causes_staging\n'
+            'WHERE indexnumberid IN (SELECT indexnumberid FROM promotion_active_staging_ids)',
+            self.sql,
+        )
 
     def test_addresses_use_natural_key_delete(self):
         for col in ADDRESS_NATURAL_KEY_COLUMNS:
@@ -132,6 +151,14 @@ class PromoteStagingSqlContractTests(unittest.TestCase):
     def test_all_staging_tables_dropped(self):
         for table in OCA_TABLES:
             self.assertIn(f'DROP TABLE IF EXISTS {table}_staging', self.sql)
+
+
+class PurgeTombstonedCasesSqlContractTests(unittest.TestCase):
+    def test_purge_deletes_index_not_metadata(self):
+        sql = (SQL_DIR / PURGE_TOMBSTONED_CASES_SQL_FILE).read_text(encoding='utf-8')
+        self.assertRegex(sql, r'DELETE FROM oca_index\b')
+        self.assertIn('oca_metadata', sql)
+        self.assertNotRegex(sql, r'DELETE FROM oca_metadata\b')
 
 
 class DatabaseTransactionTests(unittest.TestCase):
