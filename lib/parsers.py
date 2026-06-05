@@ -586,6 +586,10 @@ def _worker_thread(case_queue, db_queue, extract_date, thread_id, stats: ParseFi
     while True:
         try:
             case = case_queue.get(timeout=1)
+        except queue.Empty:
+            continue
+
+        try:
             if case is None:  # Sentinel value to stop thread
                 break
 
@@ -619,9 +623,6 @@ def _worker_thread(case_queue, db_queue, extract_date, thread_id, stats: ParseFi
                 # Clear the case copy from memory
                 case.clear()
                 db_queue.put(thread_db)  # Return db connection to pool
-                
-        except queue.Empty:
-            continue
         finally:
             case_queue.task_done()
 
