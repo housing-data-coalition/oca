@@ -213,6 +213,50 @@ class OcaEtlPipelineTests(unittest.TestCase):
         upload_mock.assert_called_once()
         geocode_rds_mock.assert_not_called()
 
+    def test_skip_public_publish_skips_post_promote_s3(self):
+        selection = mock.Mock(
+            selected_zip_files=['file.zip'],
+            skipped_reprocess_files=[],
+            new_file_set={'file.zip'},
+            reprocess_file_set=set(),
+        )
+        fake_manifest = mock.Mock()
+        fake_manifest.file_details_by_name = {}
+        with mock.patch('lib.etl.EtlRunManifest', return_value=fake_manifest), \
+             mock.patch('lib.etl.Database') as db_cls, \
+             mock.patch('lib.etl.DuckDB'), \
+             mock.patch('lib.etl.Sftp'), \
+             mock.patch('lib.etl.S3'), \
+             mock.patch('lib.etl.make_dir', side_effect=lambda x: x), \
+             mock.patch('lib.etl.select_input_files', return_value=selection), \
+             mock.patch('lib.etl.download_selected_files'), \
+             mock.patch('lib.etl.parse_xml_to_staging'), \
+             mock.patch('lib.etl.export_staging_csvs'), \
+             mock.patch('lib.etl.geocode_staging_csvs'), \
+             mock.patch('lib.etl.upload_staging_csvs'), \
+             mock.patch('lib.etl.import_and_promote_staging'), \
+             mock.patch('lib.etl.publish_public_artifacts') as publish_mock, \
+             mock.patch('lib.etl.normalize_public_s3_encryption') as normalize_mock, \
+             mock.patch('lib.etl.upload_private_source_files') as private_upload_mock, \
+             mock.patch('pathlib.Path.unlink'):
+            oca_etl(
+                {}, {}, {}, '2', {},
+                runtime_args={'skip_public_publish': True},
+            )
+
+        fake_db = db_cls.return_value
+        publish_mock.assert_not_called()
+        normalize_mock.assert_not_called()
+        private_upload_mock.assert_called_once()
+        self.assertEqual(fake_db.ensure_connection.call_count, 1)
+        skip_details = {'skipped': True, 'reason': 'SKIP_PUBLIC_PUBLISH'}
+        fake_manifest.upsert_step.assert_any_call(
+            'publish_public', 'completed', details=skip_details,
+        )
+        fake_manifest.upsert_step.assert_any_call(
+            'normalize_s3_encryption', 'completed', details=skip_details,
+        )
+
 
 class GeocodeAddressesTests(unittest.TestCase):
     def test_geocode_does_not_export_to_s3(self):

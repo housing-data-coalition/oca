@@ -26,6 +26,7 @@ Use Docker (or the published image `justfixnyc/oca:latest`) with credentials sup
 | `REPROCESS_GLOB` | Replay zip files from S3 `private/` | empty |
 | `FORCE_REPROCESS` | Replay manifest-completed files | `false` |
 | `PARSE_FAIL_FAST` | Fail `parse_xml` and abort before export/promote when any zip has case-level parse failures | `false` |
+| `SKIP_PUBLIC_PUBLISH` | Skip post-promote public CSV export and SSE normalization (reprocess throughput) | `false` |
 | `GEOCODE_WORKERS` | Geosupport pool size | CPU count |
 | `CENSUS_BATCH_CHUNK_SIZE` | Census batch chunk | `2500` |
 | `CSV_ROW_CHECK_CHUNK_SIZE` | Staging CSV preprocess chunk | `1000` |
@@ -33,6 +34,8 @@ Use Docker (or the published image `justfixnyc/oca:latest`) with credentials sup
 Refactor and E2E runs must set `S3_PREFIX=refactor/` (or another isolated prefix) so reads/writes stay out of production public paths.
 
 Memory target: **≤ 2 GiB** per job. Tune `GEOCODE_WORKERS` down (e.g. `2`) if geocoding approaches the limit.
+
+**Do not** set `SKIP_PUBLIC_PUBLISH=true` on production weekly cron, Kubernetes CronJob, or ECS tasks. Use it only for operator-driven bulk reprocess; run a normal publish afterward so public S3 matches RDS.
 
 **Parse failures (default lenient):** With `PARSE_FAIL_FAST=false`, weekly runs still promote and publish; zips with any `cases_failed` in manifest `etl_files.details` do **not** reach `status = 'completed'` (requires **`cases_failed = 0`**) and are omitted from `completed_reprocess_files` on later `REPROCESS_GLOB` runs (no `FORCE_REPROCESS` needed to retry them). Set `PARSE_FAIL_FAST=true` to stop the run before export/promote.
 
@@ -42,6 +45,7 @@ Memory target: **≤ 2 GiB** per job. Tune `GEOCODE_WORKERS` down (e.g. `2`) if 
 - **Core tables:** every table in `OCA_TABLES` is exported after promotion. Selective skip per table is unsafe when `oca_index_staging` has rows: promotion deletes child rows for the batch even when a child staging CSV was empty.
 - **Address views:** `create_addresses_views.sql` runs on every successful weekly publish (views only; `geom` already on the base table).
 - **S3 encryption:** SSE-S3 normalization runs only on objects exported in the current run (not a full public-prefix scan).
+- **Skip publish:** `SKIP_PUBLIC_PUBLISH=true` skips view rebuild, RDS exports, date badges, and SSE normalize; manifest records `publish_public` and `normalize_s3_encryption` as completed with `details.skipped=true`.
 
 ## RDS geocode backfill (on-demand)
 

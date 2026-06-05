@@ -40,8 +40,8 @@ Each weekly run is orchestrated sequentially in `oca_etl()`. There is **no** pos
 | Geocode staging | `etl_geocode.geocode_staging_addresses_csv`, `etl_stages.geocode_staging_csvs` | Geocode **every** row in `oca_addresses_staging.csv`; write `oca_addresses_staging_geocoded.csv`, copy over staging CSV; manifest step `geocode_staging`. |
 | Upload staging | `etl_stages.upload_staging_csvs`, `etl_publish.list_staging_csvs_in_dir` | Upload only whitelisted `{table}_staging.csv` files (from `OCA_TABLES`); ignores geocoder temps and other junk; manifest step `upload_staging`. |
 | Import + promote | `etl_stages.import_and_promote_staging`, `etl_promotion.py` | Bootstrap core tables, import staging CSVs via `aws_s3`, normalize, promote; batch `geom` UPDATE from lat/lon. |
-| Publish public | `etl_stages.publish_public_artifacts` | `create_addresses_views.sql` (views only); export all `OCA_TABLES` and address views; upload date badge files. |
-| Normalize encryption | `etl_stages.normalize_public_s3_encryption` | SSE-S3 on published keys except `oca_addresses_private.csv`. |
+| Publish public | `etl_stages.publish_public_artifacts` | `create_addresses_views.sql` (views only); export all `OCA_TABLES` and address views; upload date badge files. Skipped when `SKIP_PUBLIC_PUBLISH=true` (manifest steps recorded with `skipped` in details). |
+| Normalize encryption | `etl_stages.normalize_public_s3_encryption` | SSE-S3 on published keys except `oca_addresses_private.csv`. Skipped with `SKIP_PUBLIC_PUBLISH=true`. |
 | Upload private | `etl_stages.upload_private_source_files` | Back up raw XML zips to S3 `private/`. |
 
 ### RDS backfill (not weekly)
@@ -103,12 +103,12 @@ Legacy/manual only: `reset_addresses_table.sql`, `update_metadata.sql`.
 ## Idempotency and run control
 
 - **Manifest** — weekly runs record `export_staging`, `geocode_staging`, `upload_staging`, `promote_staging`, `publish_public`, `normalize_s3_encryption`, `upload_private`. Backfill runs record only `geocode_refresh`.
-- **Connection resilience** — TCP keepalives and `ensure_connection()` before promote and before publish.
+- **Connection resilience** — TCP keepalives and `ensure_connection()` before promote and before publish (publish connection refresh skipped when `SKIP_PUBLIC_PUBLISH=true`).
 - **Reprocess** — `REPROCESS_GLOB` selects S3 private backups; manifest skips files in `completed_reprocess_files` (promoted with `cases_failed = 0`) unless `FORCE_REPROCESS=true`. Zips with prior case-level parse failures stay eligible for reprocess without force.
 - **Schema isolation** — `DB_SCHEMA` + `S3_PREFIX` for refactor/E2E without touching production paths.
 - **Weekly geocode** — all staging CSV address rows (re-geocodes rows that already have lat/lon in the file).
 - **Backfill geocode** — only `lat IS NULL` with a house number; upsert matches on address line columns, not `indexnumberid` alone.
-- **Publish** — every successful weekly run exports the full public snapshot (all core tables and address views).
+- **Publish** — every successful weekly run exports the full public snapshot (all core tables and address views). `SKIP_PUBLIC_PUBLISH=true` is for bulk reprocess only; run a normal publish afterward so public S3 matches RDS.
 
 ## Output tables
 

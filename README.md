@@ -77,11 +77,14 @@ Use the same `DATABASE_URL` and `DB_SCHEMA` as weekly ETL. Optional flags: `--ge
 docker compose run --rm app env \
   DB_SCHEMA=refactor \
   S3_PREFIX=refactor/ \
-  REPROCESS_GLOB='LandlordTenant.Incr.2024-*.zip' \
+  REPROCESS_GLOB='LandlordTenant.Incr.2025-*.zip' \
   FORCE_REPROCESS=true \
+  SKIP_PUBLIC_PUBLISH=true \
   GEOCODE_WORKERS=2 \
   python oca_update.py
 ```
+
+Bulk reprocess with `SKIP_PUBLIC_PUBLISH=true` updates RDS and private backups only; public S3 CSVs stay stale until you run once with `SKIP_PUBLIC_PUBLISH=false` (or unset).
 
 Compose reads `.env` from the repo root for `DATABASE_URL`, AWS, and SFTP. Override any variable inline with `env VAR=value ...` as above.
 
@@ -111,6 +114,8 @@ Optional env vars (and matching `oca_update.py` CLI flags) tune isolation, repla
 | `S3_PREFIX` | Prefix for `private/` and `public/` S3 keys | none |
 | `REPROCESS_GLOB` | Filename glob for S3 private zip replay | none |
 | `FORCE_REPROCESS` | Replay manifest-completed glob matches | `false` |
+| `SKIP_PUBLIC_PUBLISH` | Skip post-promote RDS→S3 public CSV export and SSE normalize | `false` |
+| `PARSE_FAIL_FAST` | Abort before export/promote on any case-level parse failure | `false` |
 | `GEOCODE_WORKERS` | Geosupport multiprocessing pool size | CPU count |
 | `CENSUS_BATCH_CHUNK_SIZE` | Census batch geocoder chunk | `2500` |
 | `CSV_ROW_CHECK_CHUNK_SIZE` | Staging CSV preprocess / row-check chunk | `1000` |

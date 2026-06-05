@@ -27,6 +27,7 @@ def parse_args():
 	parser.add_argument('--s3-prefix', default=os.environ.get('S3_PREFIX', ''), help='Optional S3 prefix namespace for private/public files')
 	parser.add_argument('--reprocess-glob', default=os.environ.get('REPROCESS_GLOB', ''), help='Filename glob for S3 private zip reprocessing')
 	parser.add_argument('--force-reprocess', action='store_true', default=parse_bool(os.environ.get('FORCE_REPROCESS')), help='Reprocess matched files even if already in S3 private backup')
+	parser.add_argument('--skip-public-publish', action='store_true', default=parse_bool(os.environ.get('SKIP_PUBLIC_PUBLISH')), help='Skip post-promote RDS public CSV export and S3 encryption normalization')
 	parser.add_argument('--parse-fail-fast', action='store_true', default=parse_bool(os.environ.get('PARSE_FAIL_FAST')), help='Abort run before export/promote when any case-level parse failures occur')
 	parser.add_argument('--geocode-workers', type=int, default=parse_optional_int(os.environ.get('GEOCODE_WORKERS')), help='Worker process count for geocode pool')
 	parser.add_argument('--census-batch-chunk-size', type=int, default=int(os.environ.get('CENSUS_BATCH_CHUNK_SIZE', '2500')), help='Chunk size for census batch geocoder input')
@@ -77,6 +78,7 @@ def main():
 		'census_batch_chunk_size': args.census_batch_chunk_size,
 		'csv_row_check_chunk_size': args.csv_row_check_chunk_size,
 		'parse_fail_fast': args.parse_fail_fast,
+		'skip_public_publish': args.skip_public_publish,
 	}
 
 	oca_etl(db_args, sftp_args, s3_args, mode, remote_db_args, runtime_args)
