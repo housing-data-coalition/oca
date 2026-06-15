@@ -1,6 +1,17 @@
+x-app-environment: &app-environment
+  DATABASE_URL: ${DATABASE_URL}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+  AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
+  SFTP_HOST: ${SFTP_HOST}
+  SFTP_USER: ${SFTP_USER}
+  SFTP_PSWD: ${SFTP_PSWD}
+  SFTP_DIR: ${SFTP_DIR}
+
 services:
   app:
-    build: 
+    platform: linux/amd64
+    build:
       context: .
       dockerfile: Dockerfile
     user: 'root'
@@ -9,22 +20,29 @@ services:
       # Keep Linux .venv out of the host bind mount (macOS .venv breaks imports in-container).
       - app_venv:/app/.venv
     environment:
-      DATABASE_URL: ${DATABASE_URL}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
-      SFTP_HOST: ${SFTP_HOST}
-      SFTP_USER: ${SFTP_USER}
-      SFTP_PSWD: ${SFTP_PSWD}
-      SFTP_DIR: ${SFTP_DIR}
+      <<: *app-environment
     # to debug in the container uncomment below
-    # then use use > docker compose up -d 
+    # then use use > docker compose up -d
     # > docker compose exec app /bin/bash
-    # lastly run jupyter using > uv pip install notebook and 
+    # lastly run jupyter using > uv pip install notebook and
     # > jupyter notebook --allow-root --ip 0.0.0.0 --no-browser
     # ports:
     #   - 8888:8888
     tty: true
 
+  app-dev:
+    profiles: ["dev"]
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    user: 'root'
+    volumes:
+      - .:/app
+      - app_dev_venv:/app/.venv
+    environment:
+      <<: *app-environment
+    tty: true
+
 volumes:
   app_venv:
+  app_dev_venv:

@@ -121,6 +121,8 @@ docker compose run --rm app env \
 
 Manifest: [`k8s/k8s-cron-job.yaml`](../../k8s/k8s-cron-job.yaml).
 
+The cluster image (`justfixnyc/oca:latest`) must be **linux/amd64** because Geosupport native libraries are x86_64-only. From an Apple Silicon Mac, build and push with [`dockerhub-publish.sh`](../../dockerhub-publish.sh) — it uses `docker buildx build --platform linux/amd64 --push`. Verify after push: `docker buildx imagetools inspect justfixnyc/oca:latest`.
+
 **Schedule:** `0 12 * * 6` with `timeZone: America/New_York` (weekly Saturday noon).
 
 **Memory:** requests `1536Mi`, limit `2Gi` (2 GB class).

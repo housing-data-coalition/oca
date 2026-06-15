@@ -1,16 +1,13 @@
-FROM --platform=linux/amd64 python:3.12.13-slim-trixie
+ARG TARGETPLATFORM=linux/amd64
+FROM --platform=$TARGETPLATFORM python:3.12.13-slim-trixie
 ENV TZ=America/New_York
 
-# Update package lists and setup Python with uv
+# Update package lists
 RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
     openssh-client curl ca-certificates unzip && \
     rm -rf /var/lib/apt/lists/*
-ADD https://astral.sh/uv/install.sh /uv-installer.sh
-RUN sh /uv-installer.sh && rm /uv-installer.sh
-ENV PATH="/root/.local/bin/:$PATH"
-
 # Check the latest version of Geosupport Desktop Edition™ - Linux version
 # at https://www.nyc.gov/content/planning/pages/resources/geocoding/geosupport-desktop-edition
 # Example: https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/geosupport/linux_geo25A1_25.11.zip
@@ -37,10 +34,16 @@ RUN FILE_NAME=linux_geo${RELEASE}_${MAJOR}.${MINOR}.zip; \
     ACTUAL_FOLDER=$(ls -d version-* | head -1); \
     ln -s "$ACTUAL_FOLDER" current_version
 
-# Copy app and create virtual environment
-COPY . /app
+# Copy app and create virtual environment.
+# Use pip (not uv) for dependency install: uv's native binary segfaults under
+# QEMU when building linux/amd64 images on Apple Silicon.
+COPY pyproject.toml /app/
 WORKDIR /app
-RUN uv sync --locked
+RUN python -m venv /app/.venv && \
+    /app/.venv/bin/pip install --no-cache-dir --upgrade pip && \
+    python3 -c "import tomllib; deps=tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']; open('requirements.txt','w').write('\n'.join(deps))" && \
+    /app/.venv/bin/pip install --no-cache-dir -r requirements.txt
+COPY . /app
 
 # Set environment variables
 ENV PATH="/app/.venv/bin:$PATH"

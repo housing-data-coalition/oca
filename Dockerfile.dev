@@ -1,0 +1,26 @@
+FROM python:3.12.13-slim-trixie
+ENV TZ=America/New_York
+
+# Native-platform dev image (arm64 on Apple Silicon, amd64 on Intel).
+# Geosupport is omitted — geocoding and full oca_update.py will not work here.
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+    openssh-client curl ca-certificates unzip && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml /app/
+WORKDIR /app
+RUN python -m venv /app/.venv && \
+    /app/.venv/bin/pip install --no-cache-dir --upgrade pip && \
+    python3 -c "import tomllib; deps=tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']; open('requirements.txt','w').write('\n'.join(deps))" && \
+    /app/.venv/bin/pip install --no-cache-dir -r requirements.txt
+COPY . /app
+
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+
+RUN mkdir -p ~/.ssh && chmod 0700 ~/.ssh
+
+WORKDIR /app
+CMD ["python", "oca_update.py"]

@@ -57,6 +57,24 @@ cp .env.example .env     # Or 'copy .env.example .env' on Windows
 
 Required variables: `DATABASE_URL`, `AWS_*`, `SFTP_*`, and `MODE=2` for full publish. Optional runtime controls are documented in [`.env.example`](.env.example).
 
+#### Docker platforms
+
+NYC Geosupport ships **linux/amd64-only** native libraries, so the production image (`app`) targets `linux/amd64`.
+
+| Host | Service | Use for |
+|------|---------|---------|
+| Intel Mac | `app` | Full ETL including geocoding (native amd64) |
+| Apple Silicon | `app` | Full ETL including geocoding (amd64 emulated; slower) |
+| Apple Silicon | `app-dev` | Fast native dev: tests, shell, non-geocode work |
+
+**Publish to Docker Hub** (for Kubernetes / ECS) from any Mac — builds `linux/amd64` via buildx:
+
+```bash
+export DOCKER_PASSWORD=...
+bash dockerhub-publish.sh          # tags justfixnyc/oca:latest
+bash dockerhub-publish.sh v1.2.3   # optional custom tag
+```
+
 **Typical weekly run** (process new SFTP files only; geocodes addresses in the staging CSV before S3 upload, then promotes and publishes):
 
 ```bash
@@ -91,6 +109,10 @@ Compose reads `.env` from the repo root for `DATABASE_URL`, AWS, and SFTP. Overr
 Run the test suite in Docker:
 
 ```bash
+# Apple Silicon: native arm64 (no Geosupport)
+docker compose --profile dev run --rm app-dev python -m unittest discover -s tests -p "test_*.py"
+
+# Intel Mac or when you need the production image
 docker compose run --rm app python -m unittest discover -s tests -p "test_*.py"
 ```
 
