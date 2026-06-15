@@ -117,6 +117,10 @@ def _run_geosupport(records, geocode_workers, geocode_record_fn):
         return pool.map(_geosupport_worker, records, 10000)
 
 
+def _chunk_dataframe(df, chunk_size):
+    return [df.iloc[i : i + chunk_size] for i in range(0, len(df), chunk_size)]
+
+
 def _run_census_batch(still_missing, census_batch_chunk_size, pub_dir, geocode_using_census_batch_fn):
     if not still_missing:
         return []
@@ -124,7 +128,7 @@ def _run_census_batch(still_missing, census_batch_chunk_size, pub_dir, geocode_u
     use_pool = geocode_using_census_batch_fn is geocode_using_census_batch
     chunk_size = census_batch_chunk_size
     df_missing = pd.DataFrame(still_missing)
-    splits = list(np.split(df_missing, range(chunk_size, df_missing.shape[0], chunk_size)))
+    splits = _chunk_dataframe(df_missing, chunk_size)
 
     if not use_pool:
         return [geocode_using_census_batch_fn(chunk, pub_dir) for chunk in splits]

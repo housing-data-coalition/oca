@@ -6,11 +6,14 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pandas as pd
+
 from lib.etl_geocode import (
     ADDRESS_ROW_KEY_COLUMNS,
     GEOCODE_ADDRESS_COLUMNS,
     GEOCODED_STAGING_ADDRESSES_CSV,
     STAGING_ADDRESSES_CSV,
+    _run_census_batch,
     address_row_key,
     fetch_addresses_needing_geocode,
     geocode_candidate_records,
@@ -32,6 +35,41 @@ class RowNeedsGeocodeTests(unittest.TestCase):
 
     def test_missing_lat_needs_geocode_regardless_of_house_number(self):
         self.assertTrue(row_needs_geocode({'lat': '', 'house_number': ''}))
+
+
+class RunCensusBatchTests(unittest.TestCase):
+    def test_chunks_are_dataframes_with_multiple_splits(self):
+        still_missing = [
+            {
+                'indexnumberid': f'id-{i}',
+                'lat': '',
+                'house_number': str(i),
+                'street_name': 'Main St',
+                'postalcode': '10001',
+            }
+            for i in range(3)
+        ]
+        chunk_sizes = []
+
+        def fake_census_batch(dataframe, pub_dir):
+            self.assertIsInstance(dataframe, pd.DataFrame)
+            chunk_sizes.append(len(dataframe))
+            out = dataframe.copy()
+            out['lat'] = '40.0'
+            out['lon'] = '-73.0'
+            return out
+
+        results = _run_census_batch(
+            still_missing,
+            census_batch_chunk_size=2,
+            pub_dir='/tmp',
+            geocode_using_census_batch_fn=fake_census_batch,
+        )
+
+        self.assertEqual(chunk_sizes, [2, 1])
+        self.assertEqual(len(results), 2)
+        self.assertEqual(len(results[0]), 2)
+        self.assertEqual(len(results[1]), 1)
 
 
 class GeocodeCandidateRecordsTests(unittest.TestCase):
