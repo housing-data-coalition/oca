@@ -1,10 +1,10 @@
-# Weekly OCA ETL (Saturday 12:00 US/Eastern). See docs/operations/weekly-etl-scheduling.md
+# Weekly OCA ETL (Sunday 12:00 US/Eastern). See docs/operations/weekly-etl-scheduling.md
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: oca-etl
 spec:
-  schedule: "0 12 * * 6"
+  schedule: "0 12 * * 0"
   timeZone: America/New_York
   failedJobsHistoryLimit: 3
   jobTemplate:
@@ -21,13 +21,13 @@ spec:
             - python
             - oca_update.py
             # ~2GB class: Geosupport + DuckDB staging + geocode pools
-            resources:
-              requests:
-                memory: "1536Mi"
-                cpu: "500m"
-              limits:
-                memory: "2Gi"
-                cpu: "2"
+            # resources:
+            #   requests:
+            #     memory: "1536Mi"
+            #     cpu: "500m"
+            #   limits:
+            #     memory: "2Gi"
+            #     cpu: "2"
             envFrom:
             - secretRef:
                 name: oca-etl-secrets

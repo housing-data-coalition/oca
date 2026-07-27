@@ -87,7 +87,7 @@ WHERE m.deletedate IS NOT NULL;
 
 Best for a single host with Docker and an `.env` file.
 
-**Weekly schedule example** (Saturdays 12:00 US/Eastern, same cadence as K8s manifest):
+**Weekly schedule example** (Sundays 12:00 US/Eastern, same cadence as K8s manifest):
 
 ```cron
 # /etc/cron.d/oca-etl — adjust path to your clone
