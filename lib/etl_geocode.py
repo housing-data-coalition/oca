@@ -1,0 +1,251 @@
+import csv
+import functools
+import multiprocessing
+import os
+import shutil
+from itertools import repeat
+
+import numpy as np
+import pandas as pd
+
+from .geocode_record import geocode_record, geocode_using_census_batch, suppress_geosupport_logging
+
+ADDRESS_ROW_KEY_COLUMNS = [
+    'indexnumberid', 'street1', 'street2', 'city', 'state', 'postalcode',
+]
+
+GEOCODE_ADDRESS_COLUMNS = [
+    'indexnumberid', 'street1', 'street2', 'city', 'state', 'postalcode',
+    'status', 'house_number', 'street_name', 'borough_code', 'place_name',
+    'sname', 'hnum', 'boro', 'lat', 'bin', 'bbl', 'cd', 'ct', 'council',
+    'grc', 'grc2', 'msg', 'msg2', 'lon', 'zip_code',
+]
+
+GEOCODE_EXPORT_COLUMNS = GEOCODE_ADDRESS_COLUMNS
+
+STAGING_ADDRESSES_CSV = 'oca_addresses_staging.csv'
+GEOCODED_STAGING_ADDRESSES_CSV = 'oca_addresses_staging_geocoded.csv'
+
+
+def _stringify_row_values(row):
+    normalized = {}
+    for key, value in row.items():
+        if value is None:
+            normalized[key] = ''
+        elif isinstance(value, float) and np.isnan(value):
+            normalized[key] = ''
+        else:
+            normalized[key] = str(value)
+    return normalized
+
+
+def _has_lat(value):
+    if value is None:
+        return False
+    text = str(value).strip()
+    return text != '' and text.lower() != 'nan'
+
+
+def address_row_key(row):
+    """Stable per-address identity for merge/upsert (ingest columns only)."""
+    parts = []
+    for col in ADDRESS_ROW_KEY_COLUMNS:
+        value = row.get(col)
+        if value is None:
+            parts.append('')
+        elif isinstance(value, float) and np.isnan(value):
+            parts.append('')
+        else:
+            parts.append(str(value))
+    return tuple(parts)
+
+
+def row_needs_geocode(row):
+    """Mirror select_addresses_needing_geocode.sql for unit tests."""
+    return not _has_lat(row.get('lat'))
+
+
+def _rows_from_fetchall(rows):
+    return [
+        _stringify_row_values(dict(zip(GEOCODE_ADDRESS_COLUMNS, row)))
+        for row in rows
+    ]
+
+
+def fetch_addresses_needing_geocode(db):
+    rows = db.sql_fetch_all_from_file('select_addresses_needing_geocode.sql')
+    return _rows_from_fetchall(rows)
+
+
+def _prepare_rows_for_db(rows):
+    prepared = []
+    for row in rows:
+        db_row = {}
+        for col in GEOCODE_EXPORT_COLUMNS:
+            value = row.get(col, '')
+            if col in ('lat', 'lon') and not _has_lat(value):
+                db_row[col] = None
+            else:
+                db_row[col] = value if value != '' else None
+        prepared.append(db_row)
+    return prepared
+
+
+def _init_geosupport_worker():
+    suppress_geosupport_logging()
+
+
+def _geosupport_worker(record):
+    return geocode_record(record, addr_cols=['street1', 'city', 'postalcode'])
+
+
+def _run_geosupport(records, geocode_workers, geocode_record_fn):
+    geocode_one = functools.partial(
+        geocode_record_fn,
+        addr_cols=['street1', 'city', 'postalcode'],
+    )
+    use_pool = geocode_record_fn is geocode_record
+    if not use_pool:
+        return [geocode_one(record) for record in records]
+
+    suppress_geosupport_logging()
+    worker_count = min(geocode_workers, multiprocessing.cpu_count())
+    with multiprocessing.Pool(
+        processes=worker_count,
+        initializer=_init_geosupport_worker,
+    ) as pool:
+        return pool.map(_geosupport_worker, records, 10000)
+
+
+def _run_census_batch(still_missing, census_batch_chunk_size, pub_dir, geocode_using_census_batch_fn):
+    if not still_missing:
+        return []
+
+    use_pool = geocode_using_census_batch_fn is geocode_using_census_batch
+    chunk_size = census_batch_chunk_size
+    df_missing = pd.DataFrame(still_missing)
+    splits = list(np.split(df_missing, range(chunk_size, df_missing.shape[0], chunk_size)))
+
+    if not use_pool:
+        return [geocode_using_census_batch_fn(chunk, pub_dir) for chunk in splits]
+
+    census_pool_workers = min(5, multiprocessing.cpu_count())
+    data_split = zip(splits, repeat(pub_dir))
+    with multiprocessing.Pool(processes=census_pool_workers) as pool:
+        return pool.starmap(geocode_using_census_batch_fn, data_split)
+
+
+def geocode_candidate_records(
+    records,
+    geocode_workers,
+    census_batch_chunk_size,
+    pub_dir,
+    geocode_record_fn=geocode_record,
+    geocode_using_census_batch_fn=geocode_using_census_batch,
+):
+    if not records:
+        return []
+
+    print(f'Geocoding {len(records)} addresses using Geosupport')
+    geosupport_results = _run_geosupport(records, geocode_workers, geocode_record_fn)
+
+    still_missing = [row for row in geosupport_results if not _has_lat(row.get('lat'))]
+    if not still_missing:
+        return geosupport_results
+
+    print(f'Geocoding {len(still_missing)} addresses using Census batch')
+    census_chunks = _run_census_batch(
+        still_missing,
+        census_batch_chunk_size,
+        pub_dir,
+        geocode_using_census_batch_fn,
+    )
+    if census_chunks:
+        census_results = pd.concat(census_chunks, ignore_index=True).to_dict('records')
+    else:
+        census_results = []
+
+    by_key = {address_row_key(row): row for row in geosupport_results}
+    for row in census_results:
+        by_key[address_row_key(row)] = row
+    return [by_key[address_row_key(row)] for row in records]
+
+
+def upsert_geocoded_addresses(db, rows):
+    if not rows:
+        return 0
+
+    # Large backfills can exceed default RDS statement_timeout on staging insert + merge.
+    db.set_statement_timeout()
+    db.execute_sql_file('create_geocode_staging_table.sql')
+    db.insert_rows(_prepare_rows_for_db(rows), 'oca_addresses_geocode_staging')
+    db.execute_sql_file('upsert_geocoded_addresses.sql')
+    return len(rows)
+
+
+def read_staging_addresses_csv(pub_dir):
+    """Read ``oca_addresses_staging.csv`` rows as string-normalized dicts."""
+    path = os.path.join(pub_dir, STAGING_ADDRESSES_CSV)
+    if not os.path.exists(path):
+        return [], []
+
+    with open(path, 'r', encoding='utf-8', newline='') as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = list(reader.fieldnames or [])
+        rows = [_stringify_row_values(row) for row in reader]
+    return rows, fieldnames
+
+
+def _merge_geocoded_row(original, geocoded):
+    merged = dict(original)
+    for col in GEOCODE_ADDRESS_COLUMNS:
+        if col in geocoded:
+            merged[col] = geocoded[col]
+    return merged
+
+
+def write_geocoded_staging_csv(pub_dir, rows, fieldnames, dest_filename=GEOCODED_STAGING_ADDRESSES_CSV):
+    """Write geocoded address rows to a staging CSV (default: intermediate geocoded file)."""
+    path = os.path.join(pub_dir, dest_filename)
+    if not fieldnames:
+        fieldnames = list(GEOCODE_ADDRESS_COLUMNS)
+
+    with open(path, 'w', encoding='utf-8', newline='') as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction='ignore')
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({col: row.get(col, '') for col in fieldnames})
+
+
+def geocode_staging_addresses_csv(
+    pub_dir,
+    geocode_workers,
+    census_batch_chunk_size,
+    geocode_record_fn=geocode_record,
+    geocode_using_census_batch_fn=geocode_using_census_batch,
+):
+    """
+    Geocode every row in ``oca_addresses_staging.csv``, write
+    ``oca_addresses_staging_geocoded.csv``, then overwrite the staging file.
+    """
+    rows, fieldnames = read_staging_addresses_csv(pub_dir)
+    if not rows:
+        return 0
+
+    geocoded_rows = geocode_candidate_records(
+        rows,
+        geocode_workers,
+        census_batch_chunk_size,
+        pub_dir,
+        geocode_record_fn=geocode_record_fn,
+        geocode_using_census_batch_fn=geocode_using_census_batch_fn,
+    )
+    merged_rows = [
+        _merge_geocoded_row(original, geocoded)
+        for original, geocoded in zip(rows, geocoded_rows)
+    ]
+    write_geocoded_staging_csv(pub_dir, merged_rows, fieldnames)
+    staging_path = os.path.join(pub_dir, STAGING_ADDRESSES_CSV)
+    geocoded_path = os.path.join(pub_dir, GEOCODED_STAGING_ADDRESSES_CSV)
+    shutil.copy2(geocoded_path, staging_path)
+    return len(merged_rows)

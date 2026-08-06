@@ -6,12 +6,6 @@ DROP VIEW IF EXISTS public.oca_addresses_with_bbl;
 DROP VIEW IF EXISTS public.oca_addresses_with_ct;
 DROP VIEW IF EXISTS public.oca_addresses_public;
 
--- Drop geom column if it exists
-ALTER TABLE oca_addresses 
-DROP COLUMN IF EXISTS geom;
-DROP INDEX IF EXISTS oca_addresses_geom_idx;
-
--- Recreate views
 CREATE OR REPLACE VIEW public.oca_addresses_with_bbl AS
 	SELECT 
 		indexnumberid,
@@ -39,17 +33,6 @@ CREATE OR REPLACE VIEW public.oca_addresses_with_bbl AS
 		END AS bbl
 	FROM oca_addresses o
 	LEFT JOIN pluto p ON LEFT(p.bbl, 10) = o.bbl;
-
--- update oca_addresses with geom field
-ALTER TABLE oca_addresses
-  ADD COLUMN geom Geometry(Point, 4326);
-
-UPDATE oca_addresses 
- SET geom = ST_SetSRID(ST_Point(lon, lat),4326);
-
-CREATE INDEX oca_addresses_geom_idx
-  ON oca_addresses
-  USING GIST (geom);
 
 CREATE OR REPLACE VIEW public.oca_addresses_with_ct
 AS SELECT o.indexnumberid,

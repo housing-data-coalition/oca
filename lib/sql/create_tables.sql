@@ -1,8 +1,4 @@
-DROP VIEW IF EXISTS oca_addresses_with_bbl CASCADE;
-DROP VIEW IF EXISTS oca_addresses_with_ct CASCADE;
-
-DROP TABLE IF EXISTS oca_index CASCADE;
-CREATE TABLE oca_index (
+CREATE TABLE IF NOT EXISTS oca_index (
 	indexnumberid text PRIMARY KEY,
 	court text,
 	fileddate date,
@@ -17,16 +13,14 @@ CREATE TABLE oca_index (
 	dateofjurydemand date
 );
 
-DROP TABLE IF EXISTS oca_causes CASCADE;
-CREATE TABLE oca_causes (
+CREATE TABLE IF NOT EXISTS oca_causes (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   causeofactiontype text,
   interestfromdate date,
   amount numeric
 );
 
-DROP TABLE IF EXISTS oca_addresses CASCADE;
-CREATE TABLE oca_addresses (
+CREATE TABLE IF NOT EXISTS oca_addresses (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   street1 text,
   street2 text,
@@ -52,11 +46,11 @@ CREATE TABLE oca_addresses (
   msg text,
   msg2 text,
   lon real,
-  zip_code text
+  zip_code text,
+  geom Geometry(Point, 4326)
 );
 
-DROP TABLE IF EXISTS oca_parties CASCADE;
-CREATE TABLE oca_parties (
+CREATE TABLE IF NOT EXISTS oca_parties (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   role text,
   partytype text,
@@ -64,8 +58,7 @@ CREATE TABLE oca_parties (
   undertenant text
 );
 
-DROP TABLE IF EXISTS oca_events CASCADE;
-CREATE TABLE oca_events (
+CREATE TABLE IF NOT EXISTS oca_events (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   eventname text,
   fileddate date,
@@ -74,8 +67,7 @@ CREATE TABLE oca_events (
   answertype text
 );
 
-DROP TABLE IF EXISTS oca_appearances CASCADE;
-CREATE TABLE oca_appearances (
+CREATE TABLE IF NOT EXISTS oca_appearances (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   appearanceid bigserial,
   appearancedatetime timestamp,
@@ -85,16 +77,14 @@ CREATE TABLE oca_appearances (
   motionsequence int
 );
 
-DROP TABLE IF EXISTS oca_appearance_outcomes CASCADE;
-CREATE TABLE oca_appearance_outcomes (
+CREATE TABLE IF NOT EXISTS oca_appearance_outcomes (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   appearanceid bigint,
   appearanceoutcometype text,
   outcomebasedontype text
 );
 
-DROP TABLE IF EXISTS oca_motions CASCADE;
-CREATE TABLE oca_motions (
+CREATE TABLE IF NOT EXISTS oca_motions (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   sequence int,
   motiontype text,
@@ -106,8 +96,7 @@ CREATE TABLE oca_motions (
 );
 
 
-DROP TABLE IF EXISTS oca_decisions CASCADE;
-CREATE TABLE oca_decisions (
+CREATE TABLE IF NOT EXISTS oca_decisions (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   sequence int,
   resultof text,
@@ -115,8 +104,7 @@ CREATE TABLE oca_decisions (
 );
 
 
-DROP TABLE IF EXISTS oca_judgments CASCADE;
-CREATE TABLE oca_judgments (
+CREATE TABLE IF NOT EXISTS oca_judgments (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   sequence int,
   amendedfromjudgmentsequence int,
@@ -131,8 +119,7 @@ CREATE TABLE oca_judgments (
   debtorsroles text[]
 );
 
-DROP TABLE IF EXISTS oca_warrants CASCADE;
-CREATE TABLE oca_warrants (
+CREATE TABLE IF NOT EXISTS oca_warrants (
   indexnumberid text REFERENCES oca_index ON DELETE CASCADE,
   judgmentsequence int,
   sequence text,
@@ -160,8 +147,7 @@ CREATE TABLE oca_warrants (
   executiondate date
 );
 
-DROP TABLE IF EXISTS oca_metadata CASCADE;
-CREATE TABLE oca_metadata (
+CREATE TABLE IF NOT EXISTS oca_metadata (
   -- we don't want to delete records here when deleted from others
 	indexnumberid text PRIMARY KEY,
   initialdate date,
@@ -170,15 +156,26 @@ CREATE TABLE oca_metadata (
 );
 
 
-CREATE INDEX ON oca_causes (indexnumberid);
-CREATE INDEX ON oca_addresses (indexnumberid);
-CREATE INDEX ON oca_addresses (bbl);
-CREATE INDEX ON oca_parties (indexnumberid);
-CREATE INDEX ON oca_events (indexnumberid);
-CREATE INDEX ON oca_appearances (indexnumberid);
-CREATE INDEX ON oca_appearance_outcomes (indexnumberid);
-CREATE INDEX ON oca_motions (indexnumberid);
-CREATE INDEX ON oca_decisions (indexnumberid);
-CREATE INDEX ON oca_judgments (indexnumberid);
-CREATE INDEX ON oca_warrants (indexnumberid);
-CREATE INDEX ON oca_metadata (indexnumberid);
+CREATE INDEX IF NOT EXISTS oca_causes_indexnumberid_idx ON oca_causes (indexnumberid);
+CREATE INDEX IF NOT EXISTS oca_addresses_indexnumberid_idx ON oca_addresses (indexnumberid);
+CREATE INDEX IF NOT EXISTS oca_addresses_bbl_idx ON oca_addresses (bbl);
+CREATE INDEX IF NOT EXISTS oca_addresses_geom_idx ON oca_addresses USING GIST (geom);
+
+-- Existing deployments: add geom column and index if missing.
+ALTER TABLE oca_addresses ADD COLUMN IF NOT EXISTS geom Geometry(Point, 4326);
+CREATE INDEX IF NOT EXISTS oca_addresses_geom_idx ON oca_addresses USING GIST (geom);
+
+UPDATE oca_addresses
+SET geom = ST_SetSRID(ST_Point(lon, lat), 4326)
+WHERE geom IS NULL
+  AND lat IS NOT NULL
+  AND lon IS NOT NULL;
+CREATE INDEX IF NOT EXISTS oca_parties_indexnumberid_idx ON oca_parties (indexnumberid);
+CREATE INDEX IF NOT EXISTS oca_events_indexnumberid_idx ON oca_events (indexnumberid);
+CREATE INDEX IF NOT EXISTS oca_appearances_indexnumberid_idx ON oca_appearances (indexnumberid);
+CREATE INDEX IF NOT EXISTS oca_appearance_outcomes_indexnumberid_idx ON oca_appearance_outcomes (indexnumberid);
+CREATE INDEX IF NOT EXISTS oca_motions_indexnumberid_idx ON oca_motions (indexnumberid);
+CREATE INDEX IF NOT EXISTS oca_decisions_indexnumberid_idx ON oca_decisions (indexnumberid);
+CREATE INDEX IF NOT EXISTS oca_judgments_indexnumberid_idx ON oca_judgments (indexnumberid);
+CREATE INDEX IF NOT EXISTS oca_warrants_indexnumberid_idx ON oca_warrants (indexnumberid);
+CREATE INDEX IF NOT EXISTS oca_metadata_indexnumberid_idx ON oca_metadata (indexnumberid);

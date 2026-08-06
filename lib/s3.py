@@ -12,7 +12,7 @@ def s3_client(aws_id, aws_key):
 		's3',
 		aws_access_key_id=aws_id,
 		aws_secret_access_key=aws_key,
-		config=Config(connect_timeout=10, read_timeout=100, retries={'max_attempts': 10})
+		config=Config(connect_timeout=10, read_timeout=100, retries={'max_attempts': 10}, signature_version='s3v4')
 	)
 
 	return s3
@@ -139,7 +139,7 @@ class S3:
 		}[ext]
 
 		# date-updated image needs to have no-cache to be used in github readme
-		cache_control = 'no-cache' if content_type == 'image/png' else ''
+		cache_control = 'no-cache' if content_type in ('image/png', 'image/svg+xml') else ''
 
 		# Put the object into the bucket
 		put_object(self.s3, self.bucket_name, object_name, file_path, content_type, cache_control)
@@ -155,3 +155,22 @@ class S3:
 		files = [os.path.basename(x) for x in all_files if x != folder]
 
 		return files
+
+	def update_encryption(self, object_key):
+		"""
+		Update an S3 object's server-side encryption to SSE-S3 (AES256).
+
+		:param object_key: Object key in the bucket
+		"""
+		try:
+			self.s3.copy_object(
+				Bucket=self.bucket_name,
+				CopySource={'Bucket': self.bucket_name, 'Key': object_key},
+				Key=object_key,
+				ServerSideEncryption='AES256',
+				MetadataDirective='COPY'
+			)
+			return True
+		except ClientError as e:
+			logging.error(e)
+			return False

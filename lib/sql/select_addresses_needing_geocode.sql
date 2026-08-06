@@ -1,0 +1,30 @@
+-- Rows in oca_addresses that still need geocoding (missing lat/lon with parseable house number).
+SELECT
+  indexnumberid,
+  street1,
+  street2,
+  city,
+  state,
+  postalcode,
+  status,
+  house_number,
+  street_name,
+  borough_code,
+  place_name,
+  sname,
+  hnum,
+  boro,
+  lat,
+  bin,
+  bbl,
+  cd,
+  ct,
+  council,
+  grc,
+  grc2,
+  msg,
+  msg2,
+  lon,
+  zip_code
+FROM oca_addresses
+WHERE lat IS NULL;

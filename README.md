@@ -22,7 +22,7 @@ This work is licensed under a [Creative Commons Attribution-NonCommercial-ShareA
 
 ## CSV Files
 
-[![Date Last Updated](https://oca-2-dev.s3.amazonaws.com/public/last-updated-shield.png)](https://oca-2-dev.s3.amazonaws.com/public/last-updated-date.txt)
+[![Date Last Updated](https://oca-2-dev.s3.amazonaws.com/public/last-updated-shield.svg)](https://oca-2-dev.s3.amazonaws.com/public/last-updated-date.txt)
 
 * [`oca_index`](https://oca-2-dev.s3.amazonaws.com/public/oca_index.csv)
 * [`oca_causes`](https://oca-2-dev.s3.amazonaws.com/public/oca_causes.csv)
@@ -43,36 +43,98 @@ The data we receive from OCA is an extract of all landlord and tenant cases in N
 
 ## About the code
 
-For information about the details of various components, see [`/lib`](/lib)
+The ETL pipeline lives under [`lib/`](lib/). See [`lib/README.md`](lib/README.md) for stage-by-stage architecture, module map, and SQL script roles.
 
-### Local Setup
+### Local setup
 
-First, you will only be able to run this yourself if you have HDC's credentials to access to the SFTP to get the raw data transfered from OCA and access to the private AWS S3 where those files are stored. 
+You need credentials for OCA SFTP and the BetaNYC AWS for S3 (file storage) and RDS (PostgreSQL database), plus Docker and Docker Compose.
 
-You will need Docker and Docker Compose.
+Copy the example env file and fill in credentials:
 
-First, you'll want to create an `.env` file by copying the example one:
-
-```
+```bash
 cp .env.example .env     # Or 'copy .env.example .env' on Windows
 ```
 
-Take a look at the `.env` file and fill in the AWS S3 credentials.
+Required variables: `DATABASE_URL`, `AWS_*`, `SFTP_*`, and `MODE=2` for full publish. Optional runtime controls are documented in [`.env.example`](.env.example).
 
+**Typical weekly run** (process new SFTP files only; geocodes addresses in the staging CSV before S3 upload, then promotes and publishes):
 
-To run the whole process in the docker container run:
-
+```bash
+docker compose run --rm app python oca_update.py
 ```
-docker-compose up 
+
+**RDS geocode backfill** (on-demand; rows in `oca_addresses` where `lat IS NULL` only; does not publish public CSVs):
+
+```bash
+docker compose run --rm app python oca_geocode_backfill.py
 ```
+
+Use the same `DATABASE_URL` and `DB_SCHEMA` as weekly ETL. Optional flags: `--geocode-workers`, `--census-batch-chunk-size` (or env `GEOCODE_WORKERS`, `CENSUS_BATCH_CHUNK_SIZE`). After backfill, run view rebuild + publish separately if S3 public files must reflect new coordinates.
+
+**Refactor / replay run** (isolated schema and S3 prefix, force replay from S3 private backups):
+
+```bash
+docker compose run --rm app env \
+  DB_SCHEMA=refactor \
+  S3_PREFIX=refactor/ \
+  REPROCESS_GLOB='LandlordTenant.Incr.2025-*.zip' \
+  FORCE_REPROCESS=true \
+  SKIP_PUBLIC_PUBLISH=true \
+  GEOCODE_WORKERS=2 \
+  python oca_update.py
+```
+
+Bulk reprocess with `SKIP_PUBLIC_PUBLISH=true` updates RDS and private backups only; public S3 CSVs stay stale until you run once with `SKIP_PUBLIC_PUBLISH=false` (or unset).
+
+Compose reads `.env` from the repo root for `DATABASE_URL`, AWS, and SFTP. Override any variable inline with `env VAR=value ...` as above.
+
+Run the test suite in Docker:
+
+```bash
+docker compose run --rm app python -m unittest discover -s tests -p "test_*.py"
+```
+
+### Weekly scheduling and Kubernetes
+
+See [`docs/operations/weekly-etl-scheduling.md`](docs/operations/weekly-etl-scheduling.md) for:
+
+- local Docker + **cron** (weekly example),
+- **Kubernetes CronJob** (`k8s/k8s-cron-job.yaml`, 2Gi memory limit, secrets via `oca-etl-secrets`),
+- **AWS EventBridge + ECS Fargate** (weekly task schedule).
+
+Create cluster secrets from [`k8s/oca-etl-secret.example.yaml`](k8s/oca-etl-secret.example.yaml); do not commit real credentials.
+
+### Runtime controls
+
+Optional env vars (and matching `oca_update.py` CLI flags) tune isolation, replay, memory, and parse throughput. When unset, defaults preserve standard weekly behavior: new SFTP files only, `public` schema, CPU-count geocode workers.
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `DB_SCHEMA` | PostgreSQL `search_path` target | `public` |
+| `S3_PREFIX` | Prefix for `private/` and `public/` S3 keys | none |
+| `REPROCESS_GLOB` | Filename glob for S3 private zip replay | none |
+| `FORCE_REPROCESS` | Replay manifest-completed glob matches | `false` |
+| `SKIP_PUBLIC_PUBLISH` | Skip post-promote RDS→S3 public CSV export and SSE normalize | `false` |
+| `PARSE_FAIL_FAST` | Abort before export/promote on any case-level parse failure | `false` |
+| `GEOCODE_WORKERS` | Geosupport multiprocessing pool size | CPU count |
+| `CENSUS_BATCH_CHUNK_SIZE` | Census batch geocoder chunk | `2500` |
+| `CSV_ROW_CHECK_CHUNK_SIZE` | Staging CSV preprocess / row-check chunk | `1000` |
+| `PARSE_WRITE_BATCH_ENABLED` | Buffer parser DuckDB writes in txn windows | `1` (on) |
+| `PARSE_WRITE_BATCH_SIZE` | Max buffered INSERTs before flush | `128` |
+| `PARSE_WRITE_FLUSH_EVERY_N_CASES` | Flush cadence per parse worker | `16` |
+| `DB_KEEPALIVES_*` | PostgreSQL TCP keepalive tuning (see `.env.example`) | RDS-friendly defaults |
+
+Long runs (multi-hour XML parse, S3 upload, geocoding) may idle the RDS connection; the pipeline uses TCP keepalives and automatic reconnect (`ensure_connection`) before RDS-heavy stages. Optional `DB_KEEPALIVES_IDLE` / `DB_KEEPALIVES_INTERVAL` / `DB_KEEPALIVES_COUNT` override libpq defaults.
+
+Use an isolated `S3_PREFIX` (e.g. `refactor/`) for refactor and end-to-end test runs so reads and writes stay out of production public paths. Memory target per job is **≤ 2 GiB**; lower `GEOCODE_WORKERS` if geocoding approaches the limit.
 
 ### Jupyter notebook for maintenance
 
-Comment out `CMD ["python", "oca_update.py"]` in the Dockerfile
+Comment out `CMD ["python", "oca_update.py"]` in the Dockerfile, then:
 
-```
-docker-compose up -d
-docker-compose exec app /bin/bash
+```bash
+docker compose up -d
+docker compose exec app /bin/bash
 jupyter notebook --allow-root --ip 0.0.0.0 --no-browser
 ```
 
